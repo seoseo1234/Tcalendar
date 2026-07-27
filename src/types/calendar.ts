@@ -21,6 +21,8 @@ export type CalendarEvent = {
   memo: string;
   confidence?: "높음" | "보통" | "낮음";
   allDay?: boolean;
+  completed?: boolean;
+  completedAt?: string;
   createdAt?: string;
 };
 

@@ -26,6 +26,13 @@ const schema = {
   required: ["events"],
 };
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTemporaryGeminiError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /429|500|502|503|504|UNAVAILABLE|RESOURCE_EXHAUSTED|high demand|fetch failed/i.test(message);
+}
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY가 설정되지 않았습니다." }, { status: 503 });
@@ -41,15 +48,37 @@ export async function POST(request: NextRequest) {
       ? [{ text: instruction }, { inlineData: { data: image, mimeType: mimeType || "image/jpeg" } }]
       : `${instruction}\n\n원본 메시지:\n${text}`;
 
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-      contents,
-      config: { responseMimeType: "application/json", responseJsonSchema: schema },
-    });
+    const primaryModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const models = image
+      ? [...new Set(["gemini-3.5-flash-lite", primaryModel])]
+      : [...new Set([primaryModel, "gemini-3.5-flash-lite"])];
+    let response;
+    let lastError: unknown;
 
+    for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents,
+            config: { responseMimeType: "application/json", responseJsonSchema: schema },
+          });
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!isTemporaryGeminiError(error)) throw error;
+          if (attempt === 0) await delay(800);
+        }
+      }
+      if (response) break;
+    }
+
+    if (!response) throw lastError;
     return NextResponse.json(JSON.parse(response.text || '{"events":[]}'));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "일정을 분석하지 못했습니다.";
+    const message = isTemporaryGeminiError(error)
+      ? "AI 일정 분석 서비스가 잠시 혼잡합니다. 잠시 후 다시 시도해 주세요."
+      : error instanceof Error ? error.message : "일정을 분석하지 못했습니다.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
