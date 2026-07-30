@@ -78,11 +78,23 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [mobileWeekStartsToday, setMobileWeekStartsToday] = useState(false);
   const [googleCalendarToken, setGoogleCalendarToken] = useState("");
   const [googleCalendarAccount, setGoogleCalendarAccount] = useState("");
   const [googleCalendarLoading, setGoogleCalendarLoading] = useState<"connect" | "export" | null>(null);
 
   useEffect(() => { let stop: () => void = () => undefined; subscribeToEvents(setEvents).then((unsubscribe) => { stop = unsubscribe; }).catch(() => undefined); return () => stop(); }, []);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 780px)");
+    const updateViewport = () => {
+      setIsMobileViewport(media.matches);
+      if (!media.matches) setMobileWeekStartsToday(false);
+    };
+    updateViewport();
+    media.addEventListener("change", updateViewport);
+    return () => media.removeEventListener("change", updateViewport);
+  }, []);
   useEffect(() => {
     const savedCategories = localStorage.getItem("t-calendar-visible-categories");
     const savedNotifications = localStorage.getItem("t-calendar-notifications");
@@ -364,10 +376,20 @@ export default function Dashboard() {
   function openHelp() { setActiveSection("help"); setSidebar(false); }
   function changeCalendarView(nextView: "month" | "week") {
     if (nextView === calendarView) return;
+    setMobileWeekStartsToday(false);
     setMonth((current) => nextView === "week"
       ? startOfWeek(current)
       : startOfMonth(addDays(startOfWeek(current), 3)));
     setCalendarView(nextView);
+  }
+  function goToToday() {
+    if (calendarView === "week" && isMobileViewport) {
+      setMonth(today);
+      setMobileWeekStartsToday(true);
+      return;
+    }
+    setMobileWeekStartsToday(false);
+    setMonth(calendarView === "month" ? startOfMonth(today) : startOfWeek(today));
   }
   async function toggleCompleted(event: CalendarEvent) {
     const completed = !event.completed;
@@ -711,6 +733,8 @@ export default function Dashboard() {
   }
 
   categories.splice(0, categories.length, ...categorySettings.map((category) => category.name));
+  const visibleWeekStart = calendarView === "week" && isMobileViewport && mobileWeekStartsToday ? month : startOfWeek(month);
+  const visibleWeekEnd = addDays(visibleWeekStart, 6);
   return <div className="app-shell">
     <style>{categorySettings.map((category, index) => `.c-${index}{color:${category.color}!important;background:color-mix(in srgb,${category.color} 11%,white)!important}`).join("")}</style>
     <aside className={`sidebar ${sidebar ? "open" : ""}`}>
@@ -734,11 +758,11 @@ export default function Dashboard() {
         {activeSection === "calendar" ? <div className="workspace">
           <div className="calendar-column">
             <section className="calendar-card">
-            <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(startOfWeek(month), "M월 d일")} – ${format(endOfWeek(month), "M월 d일")}`}</h1><button onClick={() => setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1))}><ChevronLeft /></button><button onClick={() => setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1))}><ChevronRight /></button><button onClick={() => setMonth(calendarView === "month" ? startOfMonth(today) : startOfWeek(today))}>오늘</button></div>
+            <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(visibleWeekStart, "M월 d일")} – ${format(visibleWeekEnd, "M월 d일")}`}</h1><button onClick={() => setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1))}><ChevronLeft /></button><button onClick={() => setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1))}><ChevronRight /></button><button onClick={goToToday}>오늘</button></div>
               <div className="view-tools"><div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => changeCalendarView("month")}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => changeCalendarView("week")}>주간</button></div><button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button><button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>{calendarView === "week" && <button className="delete-all-button" onClick={() => setModal("deleteAll")}><Trash2 />전체 삭제</button>}</div></div>
             {calendarView === "month"
               ? <MonthCalendar month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />
-              : <WeekCalendar week={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />}
+              : <WeekCalendar week={visibleWeekStart} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />}
             </section>
             <section className="rail-card today-card"><div className="today-heading"><div><h2>오늘의 일정</h2><p className="rail-date">{format(today, "M월 d일 (EEE)", { locale: ko })}</p></div><button className="rail-more" onClick={openToday}><span>전체 일정 보기</span><ChevronRight /></button></div><div className="today-list">{todayEvents.length ? todayEvents.map((event) => <TodayItem key={event.id} event={event} onOpen={() => setSelectedEvent(event)} />) : <div className="home-empty-message"><CalendarDays /><span><strong>오늘 등록된 일정이 없습니다.</strong><small>새 일정을 추가하면 이곳에서 바로 확인할 수 있어요.</small></span></div>}</div></section>
             <section className="upcoming-strip"><div className="strip-title"><h2>다가오는 일정</h2><button onClick={openUpcoming}><span>더보기</span><ChevronRight /></button></div><div className="upcoming-list">{upcoming.length ? upcoming.map((event) => <UpcomingItem key={event.id} event={event} onOpen={() => setSelectedEvent(event)} />) : <div className="home-empty-message compact"><CalendarDays /><span><strong>다가오는 일정이 없습니다.</strong><small>새 일정을 추가하면 날짜가 가까운 순서대로 표시돼요.</small></span></div>}</div></section>
@@ -843,7 +867,7 @@ function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events
   })}</div></div>;
 }
 function WeekCalendar({ week, events, onAdd, onSelect }: { week: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
-  const days = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(week), index));
+  const days = Array.from({ length: 7 }, (_, index) => addDays(week, index));
   return <div className="week-calendar">{days.map((day, index) => { const dayEvents = events.filter((event) => event.date === format(day, "yyyy-MM-dd")); return <section className={`week-day ${isSameDay(day, today) ? "is-today" : ""}`} key={day.toISOString()}><button className="week-day-heading" onDoubleClick={() => onAdd(format(day, "yyyy-MM-dd"))}><span className={index === 0 ? "sun" : index === 6 ? "sat" : ""}>{format(day, "EEE", { locale: ko })}</span><strong>{format(day, "d")}</strong></button><div className="week-events">{dayEvents.length ? dayEvents.map((event) => <button className={`week-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onClick={() => onSelect(event)}><span><b>{shortCategory(event.category)}</b>{event.startTime || "종일"}</span><strong className={event.completed ? "completed-title" : ""}>{event.title}</strong><small>{event.location || "장소 미정"}</small></button>) : <button className="week-empty" onClick={() => onAdd(format(day, "yyyy-MM-dd"))}><Plus /> 일정 추가</button>}</div></section>; })}</div>;
 }
 function shortCategory(category: EventCategory) { return category === "제출 및 마감" ? "마감" : category.replace("학교 ", ""); }
