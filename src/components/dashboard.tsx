@@ -362,6 +362,13 @@ export default function Dashboard() {
   function openUpcoming() { setActiveSection("upcoming"); setSidebar(false); }
   function openDeadline() { setActiveSection("deadline"); setSidebar(false); }
   function openHelp() { setActiveSection("help"); setSidebar(false); }
+  function changeCalendarView(nextView: "month" | "week") {
+    if (nextView === calendarView) return;
+    setMonth((current) => nextView === "week"
+      ? startOfWeek(current)
+      : startOfMonth(addDays(startOfWeek(current), 3)));
+    setCalendarView(nextView);
+  }
   async function toggleCompleted(event: CalendarEvent) {
     const completed = !event.completed;
     if (event.id.startsWith("s")) {
@@ -728,7 +735,7 @@ export default function Dashboard() {
           <div className="calendar-column">
             <section className="calendar-card">
             <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(startOfWeek(month), "M월 d일")} – ${format(endOfWeek(month), "M월 d일")}`}</h1><button onClick={() => setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1))}><ChevronLeft /></button><button onClick={() => setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1))}><ChevronRight /></button><button onClick={() => setMonth(calendarView === "month" ? startOfMonth(today) : startOfWeek(today))}>오늘</button></div>
-              <div className="view-tools"><div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => { setCalendarView("month"); setMonth(startOfMonth(month)); }}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => { setCalendarView("week"); setMonth(startOfWeek(month)); }}>주간</button></div><button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button><button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>{calendarView === "week" && <button className="delete-all-button" onClick={() => setModal("deleteAll")}><Trash2 />전체 삭제</button>}</div></div>
+              <div className="view-tools"><div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => changeCalendarView("month")}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => changeCalendarView("week")}>주간</button></div><button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button><button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>{calendarView === "week" && <button className="delete-all-button" onClick={() => setModal("deleteAll")}><Trash2 />전체 삭제</button>}</div></div>
             {calendarView === "month"
               ? <MonthCalendar month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />
               : <WeekCalendar week={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />}
