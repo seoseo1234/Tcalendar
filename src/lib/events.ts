@@ -3,10 +3,12 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 import { getFirebaseServices, isFirebaseConfigured } from "@/lib/firebase";
@@ -46,4 +48,15 @@ export async function updateEvent(id: string, event: Partial<EventDraft>) {
 export async function removeEvent(id: string) {
   const { db } = getFirebaseServices();
   return deleteDoc(doc(db, "users", await getUserId(), "events", id));
+}
+
+export async function removeAllEvents() {
+  const { db } = getFirebaseServices();
+  const snapshot = await getDocs(await getEventsRef());
+  for (let start = 0; start < snapshot.docs.length; start += 500) {
+    const batch = writeBatch(db);
+    snapshot.docs.slice(start, start + 500).forEach((event) => batch.delete(event.ref));
+    await batch.commit();
+  }
+  return snapshot.size;
 }

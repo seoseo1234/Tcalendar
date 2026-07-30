@@ -1,14 +1,4 @@
-export type EventCategory =
-  | "학교 행사"
-  | "수업"
-  | "회의"
-  | "연수"
-  | "제출 및 마감"
-  | "학급 일정"
-  | "학생 관련"
-  | "학부모 관련"
-  | "개인 일정"
-  | "기타";
+export type EventCategory = string;
 
 export type CalendarEvent = {
   id: string;
@@ -24,6 +14,10 @@ export type CalendarEvent = {
   completed?: boolean;
   completedAt?: string;
   createdAt?: string;
+  recurrence?: "none" | "weekly" | "monthly" | "yearly";
+  reminderMinutes?: number[];
+  supplies?: string;
+  link?: string;
 };
 
 export type EventDraft = Omit<CalendarEvent, "id" | "createdAt">;
