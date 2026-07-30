@@ -738,7 +738,27 @@ export default function Dashboard() {
             {(!isFirebaseConfigured || currentUser?.isAnonymous) && <p className="demo-note">체험을 돕기 위한 예시 일정입니다. 직접 추가한 일정도 예시와 함께 표시됩니다.</p>}
           </div>
           <aside className="right-rail">
-            <section className="rail-card quick-add"><h2>빠른 추가</h2><button onClick={() => setModal("message")}><MessageSquareText /><span><strong>메시지로 추가하기</strong><small>메시지 또는 PDF 일정 인식</small></span><ChevronRight /></button><button onClick={() => setModal("photo")}><Images /><span><strong>사진으로 추가하기</strong><small>여러 장의 사진을 한 번에 분석</small></span><ChevronRight /></button><button className="manual-add-card" onClick={() => setModal("manual")}><Plus /><span><strong>직접 추가하기</strong><small>날짜와 내용을 직접 작성</small></span><ChevronRight /></button></section>
+            <section className="rail-card quick-add"><h2>빠른 추가</h2>
+              <form className="quick-message-input" onSubmit={(event) => { event.preventDefault(); if (message.trim()) analyze({ text: message.trim() }); }}>
+                <div className="quick-message-heading"><MessageSquareText /><div><strong>메시지로 추가하기</strong><small>받은 메시지를 바로 붙여넣으세요.</small></div></div>
+                <textarea
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && message.trim()) {
+                      event.preventDefault();
+                      analyze({ text: message.trim() });
+                    }
+                  }}
+                  placeholder="받은 메시지를 붙여넣어 보세요."
+                  aria-label="일정으로 변환할 메시지"
+                />
+                <div className="quick-message-actions">
+                  <button type="button" onClick={() => setModal("message")}><FileText />PDF로 추가</button>
+                  <button type="submit" disabled={!message.trim() || analyzing}><Plus />{analyzing ? "분석 중..." : "일정 추가"}</button>
+                </div>
+              </form>
+              <label className={`quick-photo-input ${analyzing ? "is-analyzing" : ""}`}><Images /><span><strong>{analyzing ? "사진 분석 중..." : "사진으로 추가하기"}</strong><small>사진을 선택하면 바로 일정을 찾아요 · 여러 장 가능</small></span><Plus /><input type="file" multiple accept="image/png,image/jpeg,image/webp" onChange={handleImages} disabled={loading || analyzing} /></label><button className="manual-add-card" onClick={() => setModal("manual")}><Plus /><span><strong>직접 추가하기</strong><small>날짜와 내용을 직접 작성</small></span><ChevronRight /></button></section>
           </aside>
         </div> : activeSection === "today" ? <section className="today-page">
           <header className="today-page-header"><div><span>오늘도 좋은 하루 보내세요</span><h1>오늘의 일정</h1><p>{format(today, "yyyy년 M월 d일 EEEE", { locale: ko })}</p></div><div className="today-add-actions"><button className="today-message-button" onClick={() => setModal("message")}><MessageSquareText /> 메시지로 추가</button><button className="today-photo-button" onClick={() => setModal("photo")}><Camera /> 사진으로 추가</button><button className="today-add-button" onClick={() => { setDraft({ ...emptyDraft, date: format(today, "yyyy-MM-dd") }); setModal("manual"); }}><Plus /> 직접 추가</button></div></header>
@@ -799,7 +819,21 @@ function HelpPage({ onOpenCalendar, onOpenToday, onOpenSettings, onOpenCategorie
 
 function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
   const cells = useMemo(() => { const from = startOfWeek(startOfMonth(month)); const to = endOfWeek(endOfMonth(month)); const result: Date[] = []; for (let day = from; day <= to; day = addDays(day, 1)) result.push(day); return result; }, [month]);
-  return <div className="month-calendar"><div className="weekday-row">{["일", "월", "화", "수", "목", "금", "토"].map((day, index) => <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((day) => { const dayEvents = events.filter((event) => event.date === format(day, "yyyy-MM-dd")); return <div key={day.toISOString()} className={`day-cell ${dayEvents.length > 1 ? "has-multiple" : ""} ${!isSameMonth(day, month) ? "outside" : ""} ${isSameDay(day, today) ? "selected" : ""}`} onDoubleClick={() => onAdd(format(day, "yyyy-MM-dd"))}><span className="day-number">{format(day, "d")}</span><div className="cell-events">{dayEvents.slice(0, 2).map((event) => <button className={`cell-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onDoubleClick={(click) => click.stopPropagation()} onClick={() => onSelect(event)}><b>{shortCategory(event.category)}</b><small>{event.startTime}</small><em className={event.completed ? "completed-title" : ""}>{event.title}</em></button>)}{dayEvents.length > 2 && <span className="more-events">+{dayEvents.length - 2}개 더보기</span>}</div></div>; })}</div></div>;
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  useEffect(() => setExpandedDate(null), [month]);
+  return <div className="month-calendar"><div className="weekday-row">{["일", "월", "화", "수", "목", "금", "토"].map((day, index) => <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((day) => {
+    const dateKey = format(day, "yyyy-MM-dd");
+    const dayEvents = events.filter((event) => event.date === dateKey);
+    const expanded = expandedDate === dateKey;
+    const displayedEvents = expanded ? dayEvents : dayEvents.slice(0, 2);
+    return <div key={day.toISOString()} className={`day-cell ${dayEvents.length > 1 ? "has-multiple" : ""} ${expanded ? "is-expanded" : ""} ${!isSameMonth(day, month) ? "outside" : ""} ${isSameDay(day, today) ? "selected" : ""}`} onDoubleClick={() => onAdd(dateKey)}>
+      <span className="day-number">{format(day, "d")}</span>
+      <div className="cell-events">
+        {displayedEvents.map((event) => <button className={`cell-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onDoubleClick={(click) => click.stopPropagation()} onClick={() => onSelect(event)}><b>{shortCategory(event.category)}</b><small>{event.startTime}</small><em className={event.completed ? "completed-title" : ""}>{event.title}</em></button>)}
+        {dayEvents.length > 2 && <button className="more-events" type="button" aria-expanded={expanded} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setExpandedDate(expanded ? null : dateKey); }}>{expanded ? <><ChevronDown />접기</> : <><ChevronDown />+{dayEvents.length - 2}개 더보기</>}</button>}
+      </div>
+    </div>;
+  })}</div></div>;
 }
 function WeekCalendar({ week, events, onAdd, onSelect }: { week: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
   const days = Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(week), index));
