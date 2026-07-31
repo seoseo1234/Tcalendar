@@ -1,5 +1,10 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { initializeFirestore, type Firestore } from "firebase/firestore";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
@@ -19,6 +24,9 @@ export function getFirebaseServices() {
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   firestore ||= initializeFirestore(app, {
     experimentalAutoDetectLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
   });
   return { db: firestore, auth: getAuth(app) };
 }
