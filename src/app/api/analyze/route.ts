@@ -11,6 +11,7 @@ const schema = {
         properties: {
           title: { type: "string" },
           date: { type: "string", description: "YYYY-MM-DD, 불확실하면 빈 문자열" },
+          endDate: { type: "string", description: "여러 날 일정의 마지막 날짜(YYYY-MM-DD). 하루 일정이거나 불확실하면 빈 문자열" },
           startTime: { type: "string", description: "HH:mm, 없으면 빈 문자열" },
           endTime: { type: "string", description: "HH:mm, 없으면 빈 문자열" },
           location: { type: "string" },
@@ -19,7 +20,7 @@ const schema = {
           confidence: { type: "string", enum: ["높음", "보통", "낮음"] },
           allDay: { type: "boolean" },
         },
-        required: ["title", "date", "startTime", "endTime", "location", "category", "memo", "confidence", "allDay"],
+        required: ["title", "date", "endDate", "startTime", "endTime", "location", "category", "memo", "confidence", "allDay"],
       },
     },
   },
@@ -49,8 +50,10 @@ function getSubject(value = "") {
 function sameExtractedEvent(left: ExtractedEvent, right: ExtractedEvent) {
   const rawLeftTitle = String(left.title || "").toLowerCase().replace(/\s+/g, "").replace(/[^\p{L}\p{N}]/gu, "");
   const rawRightTitle = String(right.title || "").toLowerCase().replace(/\s+/g, "").replace(/[^\p{L}\p{N}]/gu, "");
-  if (rawLeftTitle && rawLeftTitle === rawRightTitle) return true;
-  if (!left.date || left.date !== right.date) return false;
+  if (rawLeftTitle && rawLeftTitle === rawRightTitle) {
+    return Boolean(left.date && left.date === right.date && String(left.endDate || "") === String(right.endDate || ""));
+  }
+  if (!left.date || left.date !== right.date || String(left.endDate || "") !== String(right.endDate || "")) return false;
   const leftTitle = normalizeTitle(String(left.title || ""));
   const rightTitle = normalizeTitle(String(right.title || ""));
   const leftSubject = getSubject(leftTitle);
@@ -66,6 +69,7 @@ function mergeExtractedEvents(left: ExtractedEvent, right: ExtractedEvent) {
   const other = richer === left ? right : left;
   return {
     ...richer,
+    endDate: richer.endDate || other.endDate || "",
     startTime: richer.startTime || other.startTime,
     endTime: richer.endTime || other.endTime,
     location: richer.location || other.location,
@@ -100,7 +104,7 @@ export async function POST(request: NextRequest) {
     const ai = new GoogleGenAI({ apiKey });
     const today = new Date().toISOString().slice(0, 10);
     const periodGuide = Array.isArray(schoolSettings?.periods) ? schoolSettings.periods.map((time: string, index: number) => `${index + 1}교시 ${time}`).join(", ") : "";
-    const instruction = `당신은 한국 학교 교사를 위한 일정 추출 도우미입니다. 오늘은 ${today}입니다. 입력에서 모든 일정을 찾아 구조화하세요. 학교 교시 시작 시간은 ${periodGuide || "설정되지 않음"}이고, 시간이 없는 마감 일정의 기본 시간은 ${schoolSettings?.defaultDeadline || "17:00"}입니다. 교시 표현이 있으면 이 설정을 적용하세요. 시간표 이미지는 날짜 열과 교시 행을 함께 읽고, 하나의 표 셀을 정확히 하나의 일정으로 만드세요. 같은 날짜와 같은 교과가 "국어", "국어 수업", "1교시 국어"처럼 표현만 달리해 반복 인식되면 하나로 합치고 절대 중복해서 반환하지 마세요. 단, 날짜가 다른 같은 교과 수업은 각각 별도 일정입니다. 여러 이미지나 여러 PDF 페이지에 같은 일정이 반복되어도 하나로 합치세요. 상대 날짜를 실제 날짜로 바꾸고, 추측이 필요한 날짜는 비워 두며 신뢰도를 낮음으로 표시하세요. 기술 용어 없이 자연스러운 한국어 제목을 만드세요.`;
+    const instruction = `당신은 한국 학교 교사를 위한 일정 추출 도우미입니다. 오늘은 ${today}입니다. 입력에서 모든 일정을 찾아 구조화하세요. 여행, 출장, 캠프, 연수처럼 시작일과 종료일이 있는 일정은 date에 시작일, endDate에 마지막 날짜를 넣어 하나의 기간 일정으로 반환하세요. 하루 일정은 endDate를 빈 문자열로 반환하고, 기간을 여러 개의 하루 일정으로 나누지 마세요. 학교 교시 시작 시간은 ${periodGuide || "설정되지 않음"}이고, 시간이 없는 마감 일정의 기본 시간은 ${schoolSettings?.defaultDeadline || "17:00"}입니다. 교시 표현이 있으면 이 설정을 적용하세요. 시간표 이미지는 날짜 열과 교시 행을 함께 읽고, 하나의 표 셀을 정확히 하나의 일정으로 만드세요. 같은 날짜와 같은 교과가 "국어", "국어 수업", "1교시 국어"처럼 표현만 달리해 반복 인식되면 하나로 합치고 절대 중복해서 반환하지 마세요. 단, 날짜가 다른 같은 교과 수업은 각각 별도 일정입니다. 여러 이미지나 여러 PDF 페이지에 같은 일정이 반복되어도 하나로 합치세요. 상대 날짜를 실제 날짜로 바꾸고, 추측이 필요한 날짜는 비워 두며 신뢰도를 낮음으로 표시하세요. 기술 용어 없이 자연스러운 한국어 제목을 만드세요.`;
     const contents = uploadedFiles.length
       ? [{ text: instruction }, ...uploadedFiles.map((file) => ({ inlineData: { data: file.data, mimeType: file.mimeType } }))]
       : `${instruction}\n\n원본 메시지:\n${text}`;
@@ -132,7 +136,11 @@ export async function POST(request: NextRequest) {
 
     if (!response) throw lastError;
     const parsed = JSON.parse(response.text || '{"events":[]}');
-    return NextResponse.json({ ...parsed, events: deduplicateEvents(Array.isArray(parsed.events) ? parsed.events : []) });
+    const normalizedEvents = (Array.isArray(parsed.events) ? parsed.events : []).map((event: ExtractedEvent) => ({
+      ...event,
+      endDate: event.endDate && event.date && String(event.endDate) >= String(event.date) ? event.endDate : "",
+    }));
+    return NextResponse.json({ ...parsed, events: deduplicateEvents(normalizedEvents) });
   } catch (error) {
     const message = isTemporaryGeminiError(error)
       ? "AI 일정 분석 서비스가 잠시 혼잡합니다. 잠시 후 다시 시도해 주세요."

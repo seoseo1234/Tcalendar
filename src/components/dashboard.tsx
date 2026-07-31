@@ -34,7 +34,7 @@ const sampleNotifications = (): AppNotification[] => {
     { id: `demo-upcoming-${todayKey}`, title: "예시 · 다가오는 일정", body: "내일 13:30 · 교실혁신 연수", createdAt: new Date(now.getTime() - 24 * 60 * 60_000).toISOString(), read: true },
   ];
 };
-const emptyDraft: EventDraft = { title: "", date: format(today, "yyyy-MM-dd"), startTime: "", endTime: "", location: "", category: "기타", memo: "", allDay: false, recurrence: "none", reminderMinutes: [], supplies: "", link: "" };
+const emptyDraft: EventDraft = { title: "", date: format(today, "yyyy-MM-dd"), endDate: "", startTime: "", endTime: "", location: "", category: "기타", memo: "", allDay: false, recurrence: "none", reminderMinutes: [], supplies: "", link: "" };
 const defaultNotificationSettings = { enabled: false, today: true, deadline: true, urgent: true, time: "08:00" };
 const defaultSchoolSettings = { defaultDeadline: "17:00", periods: ["09:00", "09:50", "10:40", "11:30", "13:10", "14:00"] };
 
@@ -148,10 +148,10 @@ export default function Dashboard() {
     .map((event) => ({ ...event, ...demoOverrides[event.id], ...(demoCompletedIds.includes(event.id) ? { completed: true, completedAt: new Date().toISOString() } : {}) })), [demoCompletedIds, demoDeletedIds, demoOverrides]);
   const visibleEvents = useMemo(() => isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents, [demoEvents, events, isAnonymous]);
   const calendarEvents = visibleEvents.filter((event) => visibleCategories.includes(event.category));
-  const todayEvents = calendarEvents.filter((event) => isSameDay(parseISO(event.date), today));
-  const allUpcoming = calendarEvents.filter((event) => event.date > todayKey && !event.completed).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+  const todayEvents = calendarEvents.filter((event) => eventOccursOn(event, todayKey));
+  const allUpcoming = calendarEvents.filter((event) => eventEndDate(event) >= todayKey && !event.completed && !eventOccursOn(event, todayKey)).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
   const upcoming = allUpcoming.slice(0, 4);
-  const pastEvents = calendarEvents.filter((event) => event.date < todayKey && !event.completed).sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
+  const pastEvents = calendarEvents.filter((event) => eventEndDate(event) < todayKey && !event.completed).sort((a, b) => eventEndDate(b).localeCompare(eventEndDate(a)) || b.startTime.localeCompare(a.startTime));
   const completedEvents = calendarEvents.filter((event) => event.completed).sort((a, b) => (b.completedAt || b.date).localeCompare(a.completedAt || a.date));
   const unreadNotificationCount = appNotifications.filter((notification) => !notification.read).length;
   const searchResults = useMemo(() => {
@@ -334,13 +334,14 @@ export default function Dashboard() {
   async function createRecurrenceCopies(source: EventDraft) {
     if (!source.recurrence || source.recurrence === "none") return 0;
     const base = parseISO(source.date);
+    const duration = source.endDate ? differenceInCalendarDays(parseISO(source.endDate), base) : 0;
     const count = source.recurrence === "weekly" ? 51 : source.recurrence === "monthly" ? 11 : 3;
     const dates = Array.from({ length: count }, (_, index) => {
       const step = index + 1;
       const next = source.recurrence === "weekly" ? addWeeks(base, step) : source.recurrence === "monthly" ? addMonths(base, step) : addYears(base, step);
       return format(next, "yyyy-MM-dd");
     });
-    await Promise.all(dates.map((date) => createEvent({ ...source, date, recurrence: "none" })));
+    await Promise.all(dates.map((date) => createEvent({ ...source, date, endDate: duration > 0 ? format(addDays(parseISO(date), duration), "yyyy-MM-dd") : "", recurrence: "none" })));
     return dates.length;
   }
   async function saveDraft(event: FormEvent) {
@@ -456,7 +457,8 @@ export default function Dashboard() {
     if (!copyTarget) return;
     setLoading(true);
     try {
-      await createEvent({ ...toDraft(copyTarget), title: copyTitle.trim(), date: copyDate, startTime: copyStartTime, endTime: copyEndTime, completed: false, completedAt: "" });
+      const duration = differenceInCalendarDays(parseISO(eventEndDate(copyTarget)), parseISO(copyTarget.date));
+      await createEvent({ ...toDraft(copyTarget), title: copyTitle.trim(), date: copyDate, endDate: duration > 0 ? format(addDays(parseISO(copyDate), duration), "yyyy-MM-dd") : "", startTime: copyStartTime, endTime: copyEndTime, completed: false, completedAt: "" });
       setCopyTarget(null);
       setNotice(`‘${copyTarget.title}’ 일정을 ${copyDate}에 복사했습니다.`);
     } catch (error) {
@@ -551,7 +553,7 @@ export default function Dashboard() {
     const dateTime = (date: string, time: string) => `${date.replace(/-/g, "")}T${(time || "00:00").replace(":", "")}00`;
     const rows = visibleEvents.map((event) => {
       const start = event.allDay ? `DTSTART;VALUE=DATE:${event.date.replace(/-/g, "")}` : `DTSTART:${dateTime(event.date, event.startTime)}`;
-      const end = event.allDay ? `DTEND;VALUE=DATE:${format(addDays(parseISO(event.date), 1), "yyyyMMdd")}` : event.endTime ? `DTEND:${dateTime(event.date, event.endTime)}` : "";
+      const end = event.allDay ? `DTEND;VALUE=DATE:${format(addDays(parseISO(eventEndDate(event)), 1), "yyyyMMdd")}` : event.endTime ? `DTEND:${dateTime(eventEndDate(event), event.endTime)}` : "";
       return ["BEGIN:VEVENT", `UID:${event.id}@t-calendar`, `DTSTAMP:${format(new Date(), "yyyyMMdd'T'HHmmss")}`, start, end, `SUMMARY:${escape(event.title)}`, `LOCATION:${escape(event.location)}`, `DESCRIPTION:${escape([event.memo, event.supplies ? `준비물: ${event.supplies}` : "", event.link || ""].filter(Boolean).join("\n"))}`, "END:VEVENT"].filter(Boolean).join("\r\n");
     });
     const content = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//T-Calendar//KO", "CALSCALE:GREGORIAN", ...rows, "END:VCALENDAR"].join("\r\n");
@@ -682,8 +684,8 @@ export default function Dashboard() {
         }
 
         const startDate = new Date(`${event.date}T${event.startTime || "09:00"}:00+09:00`);
-        const endDate = event.endTime
-          ? new Date(`${event.date}T${event.endTime}:00+09:00`)
+        const endAt = event.endTime
+          ? new Date(`${eventEndDate(event)}T${event.endTime}:00+09:00`)
           : new Date(startDate.getTime() + 60 * 60_000);
         const requestBody = {
           summary: event.title,
@@ -696,8 +698,8 @@ export default function Dashboard() {
           ].filter(Boolean).join("\n") || undefined,
           start: event.allDay ? { date: event.date } : { dateTime: startDate.toISOString(), timeZone: "Asia/Seoul" },
           end: event.allDay
-            ? { date: format(addDays(parseISO(event.date), 1), "yyyy-MM-dd") }
-            : { dateTime: endDate.toISOString(), timeZone: "Asia/Seoul" },
+            ? { date: format(addDays(parseISO(eventEndDate(event)), 1), "yyyy-MM-dd") }
+            : { dateTime: endAt.toISOString(), timeZone: "Asia/Seoul" },
           extendedProperties: { private: { tCalendarId: event.id, source: "t-calendar" } },
         };
         const createResponse = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
@@ -847,7 +849,7 @@ export default function Dashboard() {
     <Modal title="일정 상세" open={Boolean(selectedEvent)} onClose={() => setSelectedEvent(null)}><div className="modal-body event-detail">{selectedEvent && <><div className="detail-badges"><div className={`detail-category c-${categories.indexOf(selectedEvent.category)}`}>{selectedEvent.category}</div>{selectedEvent.completed && <span className="detail-completed">완료됨</span>}</div><h3 className={selectedEvent.completed ? "completed-title" : ""}>{selectedEvent.title}</h3><dl><div><dt>날짜</dt><dd>{format(parseISO(selectedEvent.date), "yyyy년 M월 d일 (EEE)", { locale: ko })}</dd></div><div><dt>시간</dt><dd>{selectedEvent.allDay ? "종일" : `${selectedEvent.startTime || "시간 미정"}${selectedEvent.endTime ? ` – ${selectedEvent.endTime}` : ""}`}</dd></div><div><dt>장소</dt><dd>{selectedEvent.location || "장소 미정"}</dd></div><div><dt>메모</dt><dd>{selectedEvent.memo || "메모 없음"}</dd></div></dl><button className={`completion-button ${selectedEvent.completed ? "is-completed" : ""}`} disabled={loading} onClick={() => toggleCompleted(selectedEvent)}>{selectedEvent.completed ? "미완료로 되돌리기" : "일정 완료"}</button><div className="detail-actions"><button className="detail-copy" onClick={() => { setCopyTarget(selectedEvent); setCopyDate(format(addDays(parseISO(selectedEvent.date), 1), "yyyy-MM-dd")); setCopyTitle(selectedEvent.title); setCopyStartTime(selectedEvent.startTime); setCopyEndTime(selectedEvent.endTime); setSelectedEvent(null); }}><Plus /><span>복사하여 추가</span></button><button className="detail-edit" onClick={() => { setDraft(toDraft(selectedEvent)); setEditTarget(selectedEvent); setSelectedEvent(null); }}>수정</button><button className="detail-delete" onClick={() => { setDeleteTarget(selectedEvent); setSelectedEvent(null); }}>삭제</button></div></>}</div></Modal>
     <Modal title="일정 복사하기" open={Boolean(copyTarget)} onClose={() => setCopyTarget(null)}><form className="modal-body copy-event-form" onSubmit={saveCopy}>{copyTarget && <><span className={`detail-category c-${categories.indexOf(copyTarget.category)}`}>{copyTarget.category}</span><label className="copy-edit-field">일정 이름<input required value={copyTitle} onChange={(event) => setCopyTitle(event.target.value)} /></label><div className="copy-time-fields"><label>시작 시간<input type="time" value={copyStartTime} onChange={(event) => setCopyStartTime(event.target.value)} /></label><label>종료 시간<input type="time" value={copyEndTime} onChange={(event) => setCopyEndTime(event.target.value)} /></label></div><label className="copy-date-field">새 일정 날짜<input required type="date" value={copyDate} onChange={(event) => setCopyDate(event.target.value)} /></label><p className="copy-helper">기존 일정의 이름과 시간을 불러왔습니다. 필요한 내용을 변경한 뒤 새 날짜에 복사하세요.</p><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setCopyTarget(null)}>취소</button><button type="submit" className="primary-button" disabled={loading || !copyTitle.trim()}>{loading ? "복사 중..." : "일정 복사"}</button></div></>}</form></Modal>
     <Modal title="일정 수정" open={Boolean(editTarget)} onClose={() => setEditTarget(null)}><EventForm draft={draft} setDraft={setDraft} onSubmit={saveEdit} loading={loading} submitLabel="수정 완료" categoryOptions={categorySettings.map((category) => category.name)} /></Modal>
-    <Modal title="찾은 일정 확인" open={modal === "review"} onClose={() => setModal(null)} wide><div className="modal-body"><div className="review-toolbar"><div><p className="helper">날짜와 시간을 확인하고 필요한 내용을 직접 수정하세요.</p><span>원본 메시지와 파일은 저장하지 않습니다.</span></div><button className="secondary-button" onClick={() => setSelected(selected.length === candidates.length ? [] : candidates.map((_, index) => index))}>{selected.length === candidates.length ? "전체 해제" : "전체 선택"}</button></div><div className="candidate-list editable-candidates">{candidates.map((event, index) => <article className={`candidate-edit ${!event.date || event.confidence === "낮음" ? "needs-review" : ""}`} key={`${index}`}><header><label><input type="checkbox" checked={selected.includes(index)} onChange={() => setSelected((items) => items.includes(index) ? items.filter((item) => item !== index) : [...items, index])}/><span>일정 {index + 1}</span></label><div>{event.confidence && <b className={`confidence confidence-${event.confidence}`}>신뢰도 {event.confidence}</b>}<button onClick={() => removeCandidate(index)} aria-label="후보 삭제"><Trash2 /></button></div></header>{(!event.date || event.confidence === "낮음") && <p className="candidate-warning">날짜 또는 인식 결과를 꼭 확인해 주세요.</p>}<div className="candidate-edit-grid"><label className="full">제목<input value={event.title} onChange={(change) => updateCandidate(index, "title", change.target.value)} /></label><label>날짜<input type="date" value={event.date} onChange={(change) => updateCandidate(index, "date", change.target.value)} /></label><label>분류<select value={event.category} onChange={(change) => updateCandidate(index, "category", change.target.value)}>{categorySettings.map((category) => <option key={category.name}>{category.name}</option>)}</select></label><label>시작 시간<input type="time" value={event.startTime} onChange={(change) => updateCandidate(index, "startTime", change.target.value)} /></label><label>종료 시간<input type="time" value={event.endTime} onChange={(change) => updateCandidate(index, "endTime", change.target.value)} /></label><label className="full">장소<input value={event.location} onChange={(change) => updateCandidate(index, "location", change.target.value)} /></label><label className="full">메모<textarea value={event.memo} onChange={(change) => updateCandidate(index, "memo", change.target.value)} /></label></div></article>)}</div>{!candidates.length && <div className="review-empty">새로 추가할 일정이 없습니다.</div>}<div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>취소</button><button className="primary-button" disabled={!selected.length || loading || selected.some((index) => !candidates[index]?.title || !candidates[index]?.date)} onClick={saveCandidates}>{selected.length}개 캘린더에 추가</button></div></div></Modal>
+    <Modal title="찾은 일정 확인" open={modal === "review"} onClose={() => setModal(null)} wide><div className="modal-body"><div className="review-toolbar"><div><p className="helper">날짜와 시간을 확인하고 필요한 내용을 직접 수정하세요.</p><span>원본 메시지와 파일은 저장하지 않습니다.</span></div><button className="secondary-button" onClick={() => setSelected(selected.length === candidates.length ? [] : candidates.map((_, index) => index))}>{selected.length === candidates.length ? "전체 해제" : "전체 선택"}</button></div><div className="candidate-list editable-candidates">{candidates.map((event, index) => <article className={`candidate-edit ${!event.date || event.confidence === "낮음" ? "needs-review" : ""}`} key={`${index}`}><header><label><input type="checkbox" checked={selected.includes(index)} onChange={() => setSelected((items) => items.includes(index) ? items.filter((item) => item !== index) : [...items, index])}/><span>일정 {index + 1}</span></label><div>{event.confidence && <b className={`confidence confidence-${event.confidence}`}>신뢰도 {event.confidence}</b>}<button onClick={() => removeCandidate(index)} aria-label="후보 삭제"><Trash2 /></button></div></header>{(!event.date || event.confidence === "낮음") && <p className="candidate-warning">날짜 또는 인식 결과를 꼭 확인해 주세요.</p>}<div className="candidate-edit-grid"><label className="full">제목<input value={event.title} onChange={(change) => updateCandidate(index, "title", change.target.value)} /></label><label>시작일<input type="date" value={event.date} onChange={(change) => updateCandidate(index, "date", change.target.value)} /></label><label>종료일 <small>(선택)</small><input type="date" min={event.date} value={event.endDate || ""} onChange={(change) => updateCandidate(index, "endDate", change.target.value)} /></label><label>분류<select value={event.category} onChange={(change) => updateCandidate(index, "category", change.target.value)}>{categorySettings.map((category) => <option key={category.name}>{category.name}</option>)}</select></label><label>시작 시간<input type="time" value={event.startTime} onChange={(change) => updateCandidate(index, "startTime", change.target.value)} /></label><label>종료 시간<input type="time" value={event.endTime} onChange={(change) => updateCandidate(index, "endTime", change.target.value)} /></label><label className="full">장소<input value={event.location} onChange={(change) => updateCandidate(index, "location", change.target.value)} /></label><label className="full">메모<textarea value={event.memo} onChange={(change) => updateCandidate(index, "memo", change.target.value)} /></label></div></article>)}</div>{!candidates.length && <div className="review-empty">새로 추가할 일정이 없습니다.</div>}<div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>취소</button><button className="primary-button" disabled={!selected.length || loading || selected.some((index) => !candidates[index]?.title || !candidates[index]?.date || Boolean(candidates[index]?.endDate && candidates[index].endDate! < candidates[index].date))} onClick={saveCandidates}>{selected.length}개 캘린더에 추가</button></div></div></Modal>
     <Modal title="일정을 삭제할까요?" open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)}><div className="modal-body"><p><strong>{deleteTarget?.title}</strong> 일정을 삭제하면 되돌릴 수 없습니다.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setDeleteTarget(null)}>취소</button><button className="danger-button" onClick={() => deleteTarget && deleteSingleEvent(deleteTarget)}>삭제</button></div></div></Modal>
     {analyzing && <div className="analysis-loading" role="status" aria-live="polite"><div className="analysis-loading-card"><div className="analysis-spinner"><span /></div><strong>AI가 일정을 찾고 있어요</strong><p>사진 속 날짜와 내용을 분석하고 있습니다.<br />잠시만 기다려 주세요.</p><div className="analysis-progress"><i /></div></div></div>}
     <Modal title="T-Calendar 도움말" open={modal === "help"} onClose={() => setModal(null)} wide><div className="modal-body help-guide"><section className="help-intro"><h3>처음 사용하는 순서</h3><ol><li>메시지·PDF·사진 또는 직접 입력으로 일정을 추가합니다.</li><li>AI가 찾은 일정의 날짜와 시간을 검토하고 필요한 항목을 선택합니다.</li><li>캘린더에서 일정을 눌러 상세 확인, 완료 처리, 수정 또는 삭제합니다.</li><li>분류와 알림을 자신에게 맞게 설정합니다.</li></ol></section><section><h3>사이드바 메뉴 안내</h3><div className="help-menu-list"><article><CalendarDays /><div><strong>캘린더</strong><p>전체 일정을 월간·주간으로 봅니다. 날짜를 두 번 누르면 직접 추가할 수 있고 주간 보기에서 전체 삭제가 가능합니다.</p></div></article><article><CalendarDays /><div><strong>오늘의 일정</strong><p>오늘 일정만 시간순으로 확인하고 세 가지 방식으로 새 일정을 추가합니다.</p></div></article><article><CalendarDays /><div><strong>다가오는 일정</strong><p>오늘 이후 일정을 가까운 날짜부터, 해야 할 일과 일반 일정으로 나눠 보여줍니다.</p></div></article><article><CalendarDays /><div><strong>마감 일정</strong><p>기한이 지난 미완료 항목과 완료 처리한 기록을 확인합니다.</p></div></article><article><MessageSquareText /><div><strong>메시지로 추가하기</strong><p>메시지를 붙여넣거나 PDF를 올리면 AI가 일정을 찾아 검토 목록을 만듭니다.</p></div></article><article><Images /><div><strong>사진으로 추가하기</strong><p>안내문·시간표 사진을 최대 10장까지 분석합니다. 중복은 자동으로 숨깁니다.</p></div></article><article><Plus /><div><strong>직접 추가하기</strong><p>제목, 날짜, 시간, 분류, 장소와 메모를 직접 작성합니다.</p></div></article><article><Tag /><div><strong>분류 관리</strong><p>분류의 표시 여부, 이름, 색상, 추가와 삭제를 관리합니다.</p></div></article><article><Settings /><div><strong>설정</strong><p>화면과 글자 크기, 요약·마감 알림, 로그인 계정과 로그아웃을 관리합니다.</p></div></article><article><CircleHelp /><div><strong>도움말</strong><p>현재 보고 있는 사용 안내를 엽니다.</p></div></article></div></section><section><h3>검토와 알림 사용 팁</h3><ul><li>AI 분석 후 날짜와 시간을 확인한 뒤 필요한 일정만 선택하세요.</li><li>이미 등록됐거나 이름이 같은 중복 일정은 자동으로 제외됩니다.</li><li>마감 1시간 전 알림을 받으려면 브라우저 알림과 마감 시간을 설정하세요.</li><li>일정 상세에서 완료, 수정, 복사와 삭제를 할 수 있습니다.</li></ul></section><div className="modal-actions"><button className="primary-button" onClick={() => setModal(null)}>확인</button></div></div></Modal>
@@ -875,7 +877,7 @@ function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   return <div className="month-calendar"><div className="weekday-row">{["일", "월", "화", "수", "목", "금", "토"].map((day, index) => <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((day) => {
     const dateKey = format(day, "yyyy-MM-dd");
-    const dayEvents = events.filter((event) => event.date === dateKey);
+    const dayEvents = events.filter((event) => eventOccursOn(event, dateKey));
     const expanded = expandedDate === dateKey;
     const displayedEvents = expanded ? dayEvents : dayEvents.slice(0, 2);
     return <div key={day.toISOString()} className={`day-cell ${dayEvents.length > 1 ? "has-multiple" : ""} ${expanded ? "is-expanded" : ""} ${!isSameMonth(day, month) ? "outside" : ""} ${isSameDay(day, today) ? "selected" : ""}`} onDoubleClick={() => onAdd(dateKey)}>
@@ -889,15 +891,25 @@ function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events
 }
 function WeekCalendar({ week, events, onAdd, onSelect }: { week: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
   const days = Array.from({ length: 7 }, (_, index) => addDays(week, index));
-  return <div className="week-calendar">{days.map((day, index) => { const dayEvents = events.filter((event) => event.date === format(day, "yyyy-MM-dd")); return <section className={`week-day ${isSameDay(day, today) ? "is-today" : ""}`} key={day.toISOString()}><button className="week-day-heading" onDoubleClick={() => onAdd(format(day, "yyyy-MM-dd"))}><span className={index === 0 ? "sun" : index === 6 ? "sat" : ""}>{format(day, "EEE", { locale: ko })}</span><strong>{format(day, "d")}</strong></button><div className="week-events">{dayEvents.length ? dayEvents.map((event) => <button className={`week-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onClick={() => onSelect(event)}><span><b>{shortCategory(event.category)}</b>{event.startTime || "종일"}</span><strong className={event.completed ? "completed-title" : ""}>{event.title}</strong><small>{event.location || "장소 미정"}</small></button>) : <button className="week-empty" onClick={() => onAdd(format(day, "yyyy-MM-dd"))}><Plus /> 일정 추가</button>}</div></section>; })}</div>;
+  return <div className="week-calendar">{days.map((day, index) => { const dateKey = format(day, "yyyy-MM-dd"); const dayEvents = events.filter((event) => eventOccursOn(event, dateKey)); return <section className={`week-day ${isSameDay(day, today) ? "is-today" : ""}`} key={day.toISOString()}><button className="week-day-heading" onDoubleClick={() => onAdd(dateKey)}><span className={index === 0 ? "sun" : index === 6 ? "sat" : ""}>{format(day, "EEE", { locale: ko })}</span><strong>{format(day, "d")}</strong></button><div className="week-events">{dayEvents.length ? dayEvents.map((event) => <button className={`week-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onClick={() => onSelect(event)}><span><b>{shortCategory(event.category)}</b>{event.startTime || "종일"}</span><strong className={event.completed ? "completed-title" : ""}>{event.title}</strong><small>{event.location || "장소 미정"}</small></button>) : <button className="week-empty" onClick={() => onAdd(dateKey)}><Plus /> 일정 추가</button>}</div></section>; })}</div>;
 }
 function shortCategory(category: EventCategory) { return category === "제출 및 마감" ? "마감" : category.replace("학교 ", ""); }
 function isTaskEvent(event: CalendarEvent) {
   return event.category === "제출 및 마감" || /제출|마감|과제|완료|준비|신청|보고서|계획서/.test(`${event.title} ${event.memo}`);
 }
 function toDraft(event: CalendarEvent): EventDraft {
-  const { title, date, startTime, endTime, location, category, memo, allDay, completed, completedAt, recurrence, reminderMinutes, supplies, link } = event;
-  return { title, date, startTime, endTime, location, category, memo, allDay, completed, completedAt, recurrence: recurrence || "none", reminderMinutes: reminderMinutes || [], supplies: supplies || "", link: link || "" };
+  const { title, date, endDate, startTime, endTime, location, category, memo, allDay, completed, completedAt, recurrence, reminderMinutes, supplies, link } = event;
+  return { title, date, endDate: endDate || "", startTime, endTime, location, category, memo, allDay, completed, completedAt, recurrence: recurrence || "none", reminderMinutes: reminderMinutes || [], supplies: supplies || "", link: link || "" };
+}
+function eventEndDate(event: Pick<CalendarEvent, "date" | "endDate">) {
+  return event.endDate && event.endDate >= event.date ? event.endDate : event.date;
+}
+function eventOccursOn(event: Pick<CalendarEvent, "date" | "endDate">, date: string) {
+  return event.date <= date && eventEndDate(event) >= date;
+}
+function formatEventDateRange(event: Pick<CalendarEvent, "date" | "endDate">) {
+  const start = format(parseISO(event.date), "yyyy년 M월 d일 (EEE)", { locale: ko });
+  return eventEndDate(event) === event.date ? start : `${start} ~ ${format(parseISO(eventEndDate(event)), "yyyy년 M월 d일 (EEE)", { locale: ko })}`;
 }
 function normalizeEventText(value = "") {
   return value.toLowerCase().replace(/\s+/g, "").replace(/[^\p{L}\p{N}]/gu, "");
@@ -927,7 +939,7 @@ function titleSimilarity(left: string, right: string) {
   return (2 * shared) / (aPairs.size + bPairs.size);
 }
 function eventsOverlap(left: EventDraft, right: EventDraft | CalendarEvent) {
-  if (!left.date || left.date !== right.date) return false;
+  if (!left.date || left.date !== right.date || eventEndDate(left) !== eventEndDate(right)) return false;
   const similarity = titleSimilarity(left.title, right.title);
   const sameTime = Boolean(left.startTime && right.startTime && left.startTime === right.startTime);
   const sameCanonicalTitle = Boolean(canonicalEventTitle(left.title) && canonicalEventTitle(left.title) === canonicalEventTitle(right.title));
@@ -936,13 +948,14 @@ function eventsOverlap(left: EventDraft, right: EventDraft | CalendarEvent) {
   return sameSubject || sameCanonicalTitle || similarity >= 0.78 || (sameTime && similarity >= 0.5);
 }
 function eventInformationScore(event: EventDraft) {
-  return [event.startTime, event.endTime, event.location, event.memo].filter(Boolean).length + normalizeEventText(event.title).length / 100;
+  return [event.endDate, event.startTime, event.endTime, event.location, event.memo].filter(Boolean).length + normalizeEventText(event.title).length / 100;
 }
 function mergeDuplicateEvents(primary: EventDraft, duplicate: EventDraft) {
   const richer = eventInformationScore(duplicate) > eventInformationScore(primary) ? duplicate : primary;
   const other = richer === primary ? duplicate : primary;
   return {
     ...richer,
+    endDate: richer.endDate || other.endDate || "",
     startTime: richer.startTime || other.startTime,
     endTime: richer.endTime || other.endTime,
     location: richer.location || other.location,
@@ -952,7 +965,7 @@ function mergeDuplicateEvents(primary: EventDraft, duplicate: EventDraft) {
 function deduplicateExtractedEvents(events: EventDraft[]) {
   return events.reduce<EventDraft[]>((unique, event) => {
     const eventName = normalizeEventText(event.title);
-    const duplicateIndex = unique.findIndex((saved) => Boolean(eventName && eventName === normalizeEventText(saved.title)) || eventsOverlap(event, saved));
+    const duplicateIndex = unique.findIndex((saved) => Boolean(eventName && eventName === normalizeEventText(saved.title) && event.date === saved.date && eventEndDate(event) === eventEndDate(saved)) || eventsOverlap(event, saved));
     if (duplicateIndex === -1) unique.push(event);
     else unique[duplicateIndex] = mergeDuplicateEvents(unique[duplicateIndex], event);
     return unique;
@@ -986,7 +999,7 @@ async function prepareImage(file: File) {
   return { image: compressed.split(",")[1], mimeType: "image/jpeg" };
 }
 function TodayItem({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) { return <button className={`today-item c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} onClick={onOpen}><div><span><b>{shortCategory(event.category)}</b>{event.startTime}</span><strong className={event.completed ? "completed-title" : ""}>{event.title}</strong><small>{event.location || "장소 미정"}</small></div><ChevronRight /></button>; }
-function UpcomingItem({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) { return <button onClick={onOpen}><span className={`upcoming-badge c-${categories.indexOf(event.category)}`}>{shortCategory(event.category)}</span><time>{format(parseISO(event.date), "M.d (EEE)", { locale: ko })} {event.startTime}</time><strong>{event.title}</strong><small>{event.location || "장소 미정"}</small></button>; }
+function UpcomingItem({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) { return <button onClick={onOpen}><span className={`upcoming-badge c-${categories.indexOf(event.category)}`}>{shortCategory(event.category)}</span><time>{event.endDate ? formatEventDateRange(event) : format(parseISO(event.date), "M.d (EEE)", { locale: ko })} {event.startTime}</time><strong>{event.title}</strong><small>{event.location || "장소 미정"}</small></button>; }
 function PriorityUpcomingItem({ event, index, task = false, onOpen }: { event: CalendarEvent; index: number; task?: boolean; onOpen: () => void }) {
   const daysLeft = differenceInCalendarDays(parseISO(event.date), today);
   return <button className={`upcoming-page-event ${task ? "is-task" : "is-event"}`} onClick={onOpen}><span className="priority-number">{index + 1}</span><div className="upcoming-date"><b>{daysLeft === 1 ? "내일" : `D-${daysLeft}`}</b><time>{format(parseISO(event.date), "M월 d일 (EEE)", { locale: ko })}</time></div><div className="upcoming-main"><span className="upcoming-type">{task ? "해야 할 일" : "일정"}</span><strong>{event.title}</strong><small>{event.startTime || "시간 미정"} · {event.location || "장소 미정"}{event.memo ? ` · ${event.memo}` : ""}</small></div><ChevronRight /></button>;
@@ -1003,8 +1016,9 @@ function EventForm({ draft, setDraft, onSubmit, loading, submitLabel = "일정 �
   };
   return <form className="modal-body form-grid" onSubmit={onSubmit}>
     <label className="full">일정 제목<input required value={draft.title} onChange={(event) => change("title", event.target.value)} placeholder="일정 제목" /></label>
-    <label>날짜<input required type="date" value={draft.date} onChange={(event) => change("date", event.target.value)} /></label>
-    <label>분류<select value={draft.category} onChange={(event) => change("category", event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
+    <label>시작일<input required type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value, endDate: draft.endDate && draft.endDate < event.target.value ? "" : draft.endDate })} /></label>
+    <label>종료일 <small>(선택)</small><input type="date" min={draft.date} value={draft.endDate || ""} onChange={(event) => change("endDate", event.target.value)} /></label>
+    <label className="full">분류<select value={draft.category} onChange={(event) => change("category", event.target.value)}>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
     <label className="full inline-check"><input type="checkbox" checked={Boolean(draft.allDay)} onChange={(event) => setDraft({ ...draft, allDay: event.target.checked, startTime: event.target.checked ? "" : draft.startTime, endTime: event.target.checked ? "" : draft.endTime })} />종일 일정</label>
     {!draft.allDay && <><label>시작 시간<input type="time" value={draft.startTime} onChange={(event) => change("startTime", event.target.value)} /></label><label>종료 시간<input type="time" value={draft.endTime} onChange={(event) => change("endTime", event.target.value)} /></label></>}
     <label className="full">장소<input value={draft.location} onChange={(event) => change("location", event.target.value)} placeholder="장소" /></label>
