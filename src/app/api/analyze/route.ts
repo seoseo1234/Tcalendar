@@ -15,7 +15,7 @@ const schema = {
           startTime: { type: "string", description: "HH:mm, 없으면 빈 문자열" },
           endTime: { type: "string", description: "HH:mm, 없으면 빈 문자열" },
           location: { type: "string" },
-          category: { type: "string", enum: ["학교 행사", "수업", "회의", "연수", "제출 및 마감", "학급 일정", "학생 관련", "학부모 관련", "개인 일정", "기타"] },
+          category: { type: "string", enum: ["공휴일", "학교 행사", "수업", "회의", "연수", "제출 및 마감", "학급 일정", "학생 관련", "학부모 관련", "개인 일정", "기타"] },
           memo: { type: "string" },
           confidence: { type: "string", enum: ["높음", "보통", "낮음"] },
           allDay: { type: "boolean" },

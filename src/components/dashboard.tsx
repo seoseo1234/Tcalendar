@@ -12,8 +12,8 @@ import type { CalendarEvent, EventCategory, EventDraft } from "@/types/calendar"
 import { Logo } from "./logo";
 import { Modal } from "./modal";
 
-const categories: EventCategory[] = ["학교 행사", "수업", "회의", "연수", "제출 및 마감", "학급 일정", "학생 관련", "학부모 관련", "개인 일정", "기타"];
-const categoryPalette = ["#27a7df", "#7161d9", "#ef8f43", "#35a776", "#e55555", "#e4a61b", "#3d8ed8", "#d66aa5", "#7b869b", "#687386"];
+const categories: EventCategory[] = ["학교 행사", "수업", "회의", "연수", "제출 및 마감", "학급 일정", "학생 관련", "학부모 관련", "개인 일정", "기타", "공휴일"];
+const categoryPalette = ["#27a7df", "#7161d9", "#ef8f43", "#35a776", "#e55555", "#e4a61b", "#3d8ed8", "#d66aa5", "#7b869b", "#687386", "#e44c65"];
 type CategorySetting = { name: string; color: string };
 type AppNotification = { id: string; title: string; body: string; createdAt: string; read: boolean };
 type ToastState = { type: "success" | "info" | "warning" | "error"; title: string; message: string };
@@ -25,6 +25,40 @@ const samples: CalendarEvent[] = [
   sample("s3", 0, "체험학습 계획서 제출", "23:59", "제출 및 마감", "이메일 제출"), sample("s4", 1, "교실혁신 연수", "13:30", "연수", "2층 컴퓨터실"),
   sample("s5", 2, "5학년 과학 실험 수업", "09:00", "수업", "과학실"), sample("s6", 5, "여름학교 운영", "09:00", "학교 행사", "체육관"),
   sample("s7", -6, "학급회의", "10:20", "학급 일정"), sample("s8", -9, "교육계획서 마감", "18:00", "제출 및 마감"),
+];
+const holiday = (date: string, title: string): CalendarEvent => ({
+  id: `holiday-${date}`,
+  title,
+  date,
+  startTime: "",
+  endTime: "",
+  location: "대한민국",
+  category: "공휴일",
+  memo: "대한민국 공휴일",
+  allDay: true,
+});
+const nationalHolidays: CalendarEvent[] = [
+  holiday("2026-01-01", "신정"),
+  holiday("2026-02-16", "설날 연휴"),
+  holiday("2026-02-17", "설날"),
+  holiday("2026-02-18", "설날 연휴"),
+  holiday("2026-03-01", "삼일절"),
+  holiday("2026-03-02", "삼일절 대체공휴일"),
+  holiday("2026-05-05", "어린이날"),
+  holiday("2026-05-24", "부처님오신날"),
+  holiday("2026-05-25", "부처님오신날 대체공휴일"),
+  holiday("2026-06-03", "제9회 전국동시지방선거"),
+  holiday("2026-06-06", "현충일"),
+  holiday("2026-07-17", "제헌절"),
+  holiday("2026-08-15", "광복절"),
+  holiday("2026-08-17", "광복절 대체공휴일"),
+  holiday("2026-09-24", "추석 연휴"),
+  holiday("2026-09-25", "추석"),
+  holiday("2026-09-26", "추석 연휴"),
+  holiday("2026-10-03", "개천절"),
+  holiday("2026-10-05", "개천절 대체공휴일"),
+  holiday("2026-10-09", "한글날"),
+  holiday("2026-12-25", "기독탄신일"),
 ];
 const sampleNotifications = (): AppNotification[] => {
   const now = new Date();
@@ -138,9 +172,15 @@ export default function Dashboard() {
     const savedDemoOverrides = localStorage.getItem("t-calendar-demo-overrides");
     const savedDemoDeleted = localStorage.getItem("t-calendar-demo-deleted");
     const savedSchoolSettings = localStorage.getItem("t-calendar-school-settings");
-    if (savedCategories) setVisibleCategories(JSON.parse(savedCategories));
+    if (savedCategories) {
+      const parsed = JSON.parse(savedCategories) as EventCategory[];
+      setVisibleCategories(parsed.includes("공휴일") ? parsed : ["공휴일", ...parsed]);
+    }
     if (savedNotifications) setNotificationSettings({ ...defaultNotificationSettings, ...JSON.parse(savedNotifications) });
-    if (savedCategorySettings) setCategorySettings(JSON.parse(savedCategorySettings));
+    if (savedCategorySettings) {
+      const parsed = JSON.parse(savedCategorySettings) as CategorySetting[];
+      setCategorySettings(parsed.some((category) => category.name === "공휴일") ? parsed : [...parsed, { name: "공휴일", color: categoryPalette[10] }]);
+    }
     if (savedUi) {
       const parsed = JSON.parse(savedUi);
       setUiSettings({ ...parsed, theme: parsed.theme === "dark" ? "dark" : "light" });
@@ -166,12 +206,16 @@ export default function Dashboard() {
   const demoEvents = useMemo(() => samples
     .filter((event) => !demoDeletedIds.includes(event.id))
     .map((event) => ({ ...event, ...demoOverrides[event.id], ...(demoCompletedIds.includes(event.id) ? { completed: true, completedAt: new Date().toISOString() } : {}) })), [demoCompletedIds, demoDeletedIds, demoOverrides]);
-  const visibleEvents = useMemo(() => isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents, [demoEvents, events, isAnonymous]);
+  const visibleEvents = useMemo(() => {
+    const userEvents = isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents;
+    const holidays = nationalHolidays.filter((holidayEvent) => !userEvents.some((event) => event.date === holidayEvent.date && event.title === holidayEvent.title));
+    return [...holidays, ...userEvents];
+  }, [demoEvents, events, isAnonymous]);
   const calendarEvents = visibleEvents.filter((event) => visibleCategories.includes(event.category));
   const todayEvents = calendarEvents.filter((event) => eventOccursOn(event, todayKey));
   const allUpcoming = calendarEvents.filter((event) => eventEndDate(event) >= todayKey && !event.completed && !eventOccursOn(event, todayKey)).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
   const upcoming = allUpcoming.slice(0, 4);
-  const pastEvents = calendarEvents.filter((event) => eventEndDate(event) < todayKey && !event.completed).sort((a, b) => eventEndDate(b).localeCompare(eventEndDate(a)) || b.startTime.localeCompare(a.startTime));
+  const pastEvents = calendarEvents.filter((event) => event.category !== "공휴일" && eventEndDate(event) < todayKey && !event.completed).sort((a, b) => eventEndDate(b).localeCompare(eventEndDate(a)) || b.startTime.localeCompare(a.startTime));
   const completedEvents = calendarEvents.filter((event) => event.completed).sort((a, b) => (b.completedAt || b.date).localeCompare(a.completedAt || a.date));
   const unreadNotificationCount = appNotifications.filter((notification) => !notification.read).length;
   const searchResults = useMemo(() => {
@@ -397,6 +441,10 @@ export default function Dashboard() {
   async function saveEdit(event: FormEvent) {
     event.preventDefault();
     if (!editTarget) return;
+    if (editTarget.id.startsWith("holiday-")) {
+      setEditTarget(null);
+      return setNotice("기본 공휴일은 수정할 수 없습니다.");
+    }
     setLoading(true);
     try {
       if (editTarget.id.startsWith("s")) {
@@ -411,6 +459,10 @@ export default function Dashboard() {
     } catch (error) { setNotice(error instanceof Error ? error.message : "수정하지 못했습니다."); } finally { setLoading(false); }
   }
   async function deleteSingleEvent(target: CalendarEvent) {
+    if (target.id.startsWith("holiday-")) {
+      setDeleteTarget(null);
+      return setNotice("기본 공휴일은 삭제할 수 없습니다. 분류 관리에서 공휴일 표시를 끌 수 있습니다.");
+    }
     if (target.id.startsWith("s")) {
       const next = [...new Set([...demoDeletedIds, target.id])];
       setDemoDeletedIds(next);
@@ -443,6 +495,7 @@ export default function Dashboard() {
     setMonth(calendarView === "month" ? startOfMonth(today) : startOfWeek(today));
   }
   async function toggleCompleted(event: CalendarEvent) {
+    if (event.id.startsWith("holiday-")) return setNotice("공휴일에는 완료 상태를 설정할 수 없습니다.");
     const completed = !event.completed;
     if (event.id.startsWith("s")) {
       const next = completed ? [...new Set([...demoCompletedIds, event.id])] : demoCompletedIds.filter((id) => id !== event.id);
@@ -538,7 +591,7 @@ export default function Dashboard() {
     setNewCategory({ name: "", color: "#27a7df" });
   }
   async function deleteCategory(name: string) {
-    if (name === "기타") return setNotice("'기타' 분류는 삭제할 수 없습니다.");
+    if (name === "기타" || name === "공휴일") return setNotice(`'${name}' 분류는 삭제할 수 없습니다.`);
     const affected = events.filter((event) => event.category === name);
     if (isFirebaseConfigured && affected.length) await Promise.all(affected.map((event) => updateEvent(event.id, { category: "기타" })));
     const next = categorySettings.filter((category) => category.name !== name);
