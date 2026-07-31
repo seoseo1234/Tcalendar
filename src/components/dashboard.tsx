@@ -2,8 +2,9 @@
 
 import { addDays, addMonths, addWeeks, addYears, differenceInCalendarDays, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, parseISO, startOfMonth, startOfWeek, subMonths, subWeeks } from "date-fns";
 import { ko } from "date-fns/locale";
-import { Bell, CalendarDays, Camera, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Download, FileText, Images, Menu, MessageSquareText, Plus, Search, Settings, Share2, ShieldAlert, SlidersHorizontal, Tag, Trash2, X } from "lucide-react";
+import { Bell, CalendarDays, Camera, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Download, FileText, Images, LogOut, Menu, MessageSquareText, Plus, Search, Settings, Share2, ShieldAlert, SlidersHorizontal, Tag, Trash2, UserRound, X } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import NextImage from "next/image";
 import { deleteUser, GoogleAuthProvider, linkWithPopup, reauthenticateWithPopup, signInWithPopup, signOut } from "firebase/auth";
 import { createEvent, removeAllEvents, removeEvent, subscribeToEvents, updateEvent } from "@/lib/events";
 import { getFirebaseServices, isFirebaseConfigured } from "@/lib/firebase";
@@ -39,6 +40,7 @@ const defaultSchoolSettings = { defaultDeadline: "17:00", periods: ["09:00", "09
 
 export default function Dashboard() {
   const currentUser = isFirebaseConfigured ? getFirebaseServices().auth.currentUser : null;
+  const isAnonymous = Boolean(currentUser?.isAnonymous);
   const userName = currentUser?.isAnonymous ? "체험 사용자" : currentUser?.displayName || currentUser?.email?.split("@")[0] || "선생님";
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [month, setMonth] = useState(startOfMonth(today));
@@ -75,6 +77,8 @@ export default function Dashboard() {
   const [schoolSettings, setSchoolSettings] = useState(defaultSchoolSettings);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -83,6 +87,14 @@ export default function Dashboard() {
   const [googleCalendarToken, setGoogleCalendarToken] = useState("");
   const [googleCalendarAccount, setGoogleCalendarAccount] = useState("");
   const [googleCalendarLoading, setGoogleCalendarLoading] = useState<"connect" | "export" | null>(null);
+  function addAppNotification(id: string, title: string, body: string) {
+    setAppNotifications((current) => {
+      if (current.some((notification) => notification.id === id)) return current;
+      const next = [{ id, title, body, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 100);
+      localStorage.setItem("t-calendar-notification-history", JSON.stringify(next));
+      return next;
+    });
+  }
 
   useEffect(() => { let stop: () => void = () => undefined; subscribeToEvents(setEvents).then((unsubscribe) => { stop = unsubscribe; }).catch(() => undefined); return () => stop(); }, []);
   useEffect(() => {
@@ -96,7 +108,8 @@ export default function Dashboard() {
     return () => media.removeEventListener("change", updateViewport);
   }, []);
   useEffect(() => {
-    const savedCategories = localStorage.getItem("t-calendar-visible-categories");
+    const frame = window.requestAnimationFrame(() => {
+      const savedCategories = localStorage.getItem("t-calendar-visible-categories");
     const savedNotifications = localStorage.getItem("t-calendar-notifications");
     const savedCategorySettings = localStorage.getItem("t-calendar-categories");
     const savedUi = localStorage.getItem("t-calendar-ui");
@@ -115,10 +128,10 @@ export default function Dashboard() {
     if (savedAppNotifications) {
       const parsed = JSON.parse(savedAppNotifications);
       const demos = sampleNotifications();
-      const initial = currentUser?.isAnonymous ? [...demos.filter((demo) => !parsed.some((notification: AppNotification) => notification.id === demo.id)), ...parsed] : parsed;
+      const initial = isAnonymous ? [...demos.filter((demo) => !parsed.some((notification: AppNotification) => notification.id === demo.id)), ...parsed] : parsed;
       setAppNotifications(initial);
-      if (currentUser?.isAnonymous) localStorage.setItem("t-calendar-notification-history", JSON.stringify(initial));
-    } else if (currentUser?.isAnonymous) {
+      if (isAnonymous) localStorage.setItem("t-calendar-notification-history", JSON.stringify(initial));
+    } else if (isAnonymous) {
       const initial = sampleNotifications();
       setAppNotifications(initial);
       localStorage.setItem("t-calendar-notification-history", JSON.stringify(initial));
@@ -127,11 +140,13 @@ export default function Dashboard() {
     if (savedDemoOverrides) setDemoOverrides(JSON.parse(savedDemoOverrides));
     if (savedDemoDeleted) setDemoDeletedIds(JSON.parse(savedDemoDeleted));
     if (savedSchoolSettings) setSchoolSettings({ ...defaultSchoolSettings, ...JSON.parse(savedSchoolSettings) });
-  }, []);
-  const demoEvents = samples
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isAnonymous]);
+  const demoEvents = useMemo(() => samples
     .filter((event) => !demoDeletedIds.includes(event.id))
-    .map((event) => ({ ...event, ...demoOverrides[event.id], ...(demoCompletedIds.includes(event.id) ? { completed: true, completedAt: new Date().toISOString() } : {}) }));
-  const visibleEvents = currentUser?.isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents;
+    .map((event) => ({ ...event, ...demoOverrides[event.id], ...(demoCompletedIds.includes(event.id) ? { completed: true, completedAt: new Date().toISOString() } : {}) })), [demoCompletedIds, demoDeletedIds, demoOverrides]);
+  const visibleEvents = useMemo(() => isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents, [demoEvents, events, isAnonymous]);
   const calendarEvents = visibleEvents.filter((event) => visibleCategories.includes(event.category));
   const todayEvents = calendarEvents.filter((event) => isSameDay(parseISO(event.date), today));
   const allUpcoming = calendarEvents.filter((event) => event.date > todayKey && !event.completed).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
@@ -205,6 +220,21 @@ export default function Dashboard() {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [searchOpen]);
+  useEffect(() => {
+    if (!profileOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProfileOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileOpen]);
   useEffect(() => {
     if (!notificationSettings.enabled || !notificationSettings.urgent || !("Notification" in window) || Notification.permission !== "granted") return;
     const notifyUrgent = () => {
@@ -459,14 +489,6 @@ export default function Dashboard() {
   function updateSchoolSettings(next: typeof defaultSchoolSettings) {
     setSchoolSettings(next);
     localStorage.setItem("t-calendar-school-settings", JSON.stringify(next));
-  }
-  function addAppNotification(id: string, title: string, body: string) {
-    setAppNotifications((current) => {
-      if (current.some((notification) => notification.id === id)) return current;
-      const next = [{ id, title, body, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 100);
-      localStorage.setItem("t-calendar-notification-history", JSON.stringify(next));
-      return next;
-    });
   }
   function markNotificationRead(id: string) {
     setAppNotifications((current) => {
@@ -751,7 +773,7 @@ export default function Dashboard() {
     <main>
       <header className="topbar"><button className="menu-button" onClick={() => setSidebar(true)} aria-label="메뉴 열기"><Menu /></button><button className="mobile-logo" onClick={openCalendar} aria-label="캘린더 홈으로 이동"><Logo /></button>
         <div className="search-area" ref={searchRef}><label className="search-box"><input value={searchQuery} onFocus={() => setSearchOpen(true)} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} placeholder="일정 검색 (예: 회의, 연수, 마감)" aria-label="일정 검색" /><Search /></label>{searchOpen && searchQuery.trim() && <section className="search-results"><header><strong>검색 결과</strong><span>{searchResults.length}개</span></header>{searchResults.length ? <div>{searchResults.map((event) => <button key={event.id} onClick={() => { setSelectedEvent(event); setSearchOpen(false); }}><span className={`search-category c-${categories.indexOf(event.category)}`}>{shortCategory(event.category)}</span><div><strong>{event.title}</strong><small>{format(parseISO(event.date), "yyyy.MM.dd (EEE)", { locale: ko })} · {event.startTime || "종일"}{event.location ? ` · ${event.location}` : ""}</small></div><ChevronRight /></button>)}</div> : <div className="search-empty"><Search /><strong>일정을 찾지 못했습니다.</strong><span>제목, 분류, 장소 또는 날짜로 다시 검색해 보세요.</span></div>}</section>}</div>
-        <div className="top-actions"><div className="notification-anchor" ref={notificationRef}><button className="icon-button alarm" aria-label={`알림 ${unreadNotificationCount}개`} aria-expanded={notificationOpen} onClick={() => setNotificationOpen((open) => !open)}><Bell />{unreadNotificationCount > 0 && <i>{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</i>}</button>{notificationOpen && <section className="notification-dropdown"><header><div><strong>알림</strong><span>읽지 않음 {unreadNotificationCount}개</span></div>{unreadNotificationCount > 0 && <button onClick={markAllNotificationsRead}>모두 읽음</button>}</header><div className="notification-dropdown-list">{appNotifications.length ? appNotifications.slice(0, 6).map((notification) => <button className={notification.read ? "is-read" : "is-unread"} key={notification.id} onClick={() => markNotificationRead(notification.id)}><i /><div><strong>{notification.title}</strong><p>{notification.body}</p><time>{format(parseISO(notification.createdAt), "M월 d일 HH:mm", { locale: ko })}</time></div></button>) : <div className="notification-dropdown-empty"><Bell /><strong>새 알림이 없습니다.</strong><span>받은 일정 알림이 이곳에 표시됩니다.</span></div>}</div><footer><button onClick={() => { setNotificationOpen(false); setModal("settings"); }}><Settings /> 알림 설정</button></footer></section>}</div><button className="icon-button" aria-label="도움말" onClick={openHelp}><CircleHelp /></button><button className="user-menu-button" onClick={() => currentUser && signOut(getFirebaseServices().auth)} title="로그아웃"><span className="user-avatar">{currentUser?.isAnonymous ? "👋" : "👩🏻"}</span><strong>{userName}</strong><ChevronDown /></button></div>
+        <div className="top-actions"><div className="notification-anchor" ref={notificationRef}><button className="icon-button alarm" aria-label={`알림 ${unreadNotificationCount}개`} aria-expanded={notificationOpen} onClick={() => setNotificationOpen((open) => !open)}><Bell />{unreadNotificationCount > 0 && <i>{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</i>}</button>{notificationOpen && <section className="notification-dropdown"><header><div><strong>알림</strong><span>읽지 않음 {unreadNotificationCount}개</span></div>{unreadNotificationCount > 0 && <button onClick={markAllNotificationsRead}>모두 읽음</button>}</header><div className="notification-dropdown-list">{appNotifications.length ? appNotifications.slice(0, 6).map((notification) => <button className={notification.read ? "is-read" : "is-unread"} key={notification.id} onClick={() => markNotificationRead(notification.id)}><i /><div><strong>{notification.title}</strong><p>{notification.body}</p><time>{format(parseISO(notification.createdAt), "M월 d일 HH:mm", { locale: ko })}</time></div></button>) : <div className="notification-dropdown-empty"><Bell /><strong>새 알림이 없습니다.</strong><span>받은 일정 알림이 이곳에 표시됩니다.</span></div>}</div><footer><button onClick={() => { setNotificationOpen(false); setModal("settings"); }}><Settings /> 알림 설정</button></footer></section>}</div><button className="icon-button" aria-label="도움말" onClick={openHelp}><CircleHelp /></button><div className="profile-anchor" ref={profileRef}><button className="user-menu-button" aria-label="프로필 메뉴" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => { setProfileOpen((open) => !open); setNotificationOpen(false); }}><span className="user-avatar">{currentUser?.isAnonymous ? "👋" : "👩🏻"}</span><strong>{userName}</strong><ChevronDown /></button>{profileOpen && <section className="profile-dropdown" role="menu"><header><span className="profile-menu-avatar">{currentUser?.isAnonymous ? "👋" : "👩🏻"}</span><div><strong>{userName}</strong><small>{currentUser?.isAnonymous ? "체험 계정" : currentUser?.email || "로그인됨"}</small></div></header><div className="profile-menu-items"><button role="menuitem" onClick={() => { setProfileOpen(false); setModal("settings"); }}><UserRound /><span><strong>계정 및 설정</strong><small>프로필, 화면, Google 연결 관리</small></span><ChevronRight /></button><button role="menuitem" onClick={() => { setProfileOpen(false); setModal("notifications"); }}><Bell /><span><strong>알림 센터</strong><small>받은 알림 {unreadNotificationCount ? `· 읽지 않음 ${unreadNotificationCount}개` : "확인"}</small></span><ChevronRight /></button><button role="menuitem" onClick={() => { setProfileOpen(false); openHelp(); }}><CircleHelp /><span><strong>도움말</strong><small>T-Calendar 사용 방법</small></span><ChevronRight /></button></div><footer><button role="menuitem" disabled={!currentUser} onClick={() => currentUser && signOut(getFirebaseServices().auth)}><LogOut />로그아웃</button></footer></section>}</div></div>
       </header>
       <div className="content">
         {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice("")}><X /></button></div>}
@@ -761,7 +783,7 @@ export default function Dashboard() {
             <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(visibleWeekStart, "M월 d일")} – ${format(visibleWeekEnd, "M월 d일")}`}</h1><button onClick={() => setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1))}><ChevronLeft /></button><button onClick={() => setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1))}><ChevronRight /></button><button onClick={goToToday}>오늘</button></div>
               <div className="view-tools"><div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => changeCalendarView("month")}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => changeCalendarView("week")}>주간</button></div><button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button><button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>{calendarView === "week" && <button className="delete-all-button" onClick={() => setModal("deleteAll")}><Trash2 />전체 삭제</button>}</div></div>
             {calendarView === "month"
-              ? <MonthCalendar month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />
+              ? <MonthCalendar key={month.toISOString()} month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />
               : <WeekCalendar week={visibleWeekStart} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />}
             </section>
             <section className="rail-card today-card"><div className="today-heading"><div><h2>오늘의 일정</h2><p className="rail-date">{format(today, "M월 d일 (EEE)", { locale: ko })}</p></div><button className="rail-more" onClick={openToday}><span>전체 일정 보기</span><ChevronRight /></button></div><div className="today-list">{todayEvents.length ? todayEvents.map((event) => <TodayItem key={event.id} event={event} onOpen={() => setSelectedEvent(event)} />) : <div className="home-empty-message"><CalendarDays /><span><strong>오늘 등록된 일정이 없습니다.</strong><small>새 일정을 추가하면 이곳에서 바로 확인할 수 있어요.</small></span></div>}</div></section>
@@ -838,7 +860,7 @@ function HelpPage({ onOpenCalendar, onOpenToday, onOpenSettings, onOpenCategorie
   return <section className="help-page">
     <header className="help-page-hero"><div><span>처음부터 차근차근</span><h1>T-Calendar 사용 안내</h1><p>일정을 가져오는 방법부터 검토, 분류, 알림, 완료 처리까지 실제 사용 순서대로 설명합니다.</p></div><button onClick={onOpenCalendar}><CalendarDays /> 캘린더로 돌아가기</button></header>
     <nav className="help-quick-nav"><a href="#help-start">시작하기</a><a href="#help-add">일정 추가</a><a href="#help-review">AI 검토</a><a href="#help-calendar">캘린더 관리</a><a href="#help-sidebar">전체 메뉴</a><a href="#help-settings">설정·알림</a></nav>
-    <section className="help-page-section" id="help-start"><div className="help-section-heading"><b>01</b><div><h2>홈 화면 이해하기</h2><p>로그인하면 가장 먼저 월간 캘린더와 빠른 추가 영역을 확인할 수 있습니다.</p></div></div><figure className="help-screenshot"><img src="/help/t-calendar-home.png" alt="T-Calendar 홈 화면 예시" /><figcaption>홈 화면 예시 — 왼쪽 사이드바에서 화면을 이동하고, 중앙 캘린더에서 날짜별 일정을 확인합니다.</figcaption></figure><div className="help-callout"><strong>먼저 확인하세요</strong><p>오늘 날짜는 강조 표시되며 일정 카드를 누르면 상세 화면이 열립니다. 월간·주간 버튼으로 캘린더 표시 방식을 바꿀 수 있습니다.</p></div></section>
+    <section className="help-page-section" id="help-start"><div className="help-section-heading"><b>01</b><div><h2>홈 화면 이해하기</h2><p>로그인하면 가장 먼저 월간 캘린더와 빠른 추가 영역을 확인할 수 있습니다.</p></div></div><figure className="help-screenshot"><NextImage src="/help/t-calendar-home.png" alt="T-Calendar 홈 화면 예시" width={1440} height={900} /><figcaption>홈 화면 예시 — 왼쪽 사이드바에서 화면을 이동하고, 중앙 캘린더에서 날짜별 일정을 확인합니다.</figcaption></figure><div className="help-callout"><strong>먼저 확인하세요</strong><p>오늘 날짜는 강조 표시되며 일정 카드를 누르면 상세 화면이 열립니다. 월간·주간 버튼으로 캘린더 표시 방식을 바꿀 수 있습니다.</p></div></section>
     <section className="help-page-section" id="help-add"><div className="help-section-heading"><b>02</b><div><h2>내 상황에 맞는 방법으로 일정 추가하기</h2><p>입력 자료에 따라 메시지, 사진, PDF, 직접 입력 중 가장 편한 방법을 선택하세요.</p></div></div><div className="help-method-grid"><article><MessageSquareText /><h3>메시지로 추가</h3><ol><li>사이드바에서 ‘메시지로 추가하기’를 누릅니다.</li><li>문자나 메신저 내용을 그대로 붙여넣습니다.</li><li>‘메시지에서 일정 찾기’를 누릅니다.</li><li>AI가 찾은 일정의 날짜와 시간을 검토합니다.</li></ol><p>하나의 메시지에 여러 일정이 있어도 각각 분리됩니다.</p></article><article><FileText /><h3>PDF로 추가</h3><ol><li>‘메시지로 추가하기’를 엽니다.</li><li>PDF 업로드 영역에서 20MB 이하 파일을 선택합니다.</li><li>문서의 여러 페이지를 AI가 함께 읽습니다.</li><li>필요한 일정만 선택해 저장합니다.</li></ol><p>학교 안내문, 가정통신문, 회의 자료에 적합합니다.</p></article><article><Images /><h3>사진으로 추가</h3><ol><li>‘사진으로 추가하기’를 누릅니다.</li><li>PNG·JPG·WEBP 사진을 최대 10장 선택합니다.</li><li>분석이 끝날 때까지 화면을 닫지 않습니다.</li><li>중복이 제거된 결과를 확인합니다.</li></ol><p>시간표는 날짜 열과 교시 행이 모두 보이게 촬영하면 정확도가 높아집니다.</p></article><article><Plus /><h3>직접 추가</h3><ol><li>‘직접 추가하기’를 누릅니다.</li><li>제목과 날짜를 필수로 입력합니다.</li><li>시간, 분류, 장소와 메모를 추가합니다.</li><li>‘일정 저장’을 누릅니다.</li></ol><p>짧은 개인 일정이나 즉시 기록할 일정에 적합합니다.</p></article></div></section>
     <section className="help-page-section" id="help-review"><div className="help-section-heading"><b>03</b><div><h2>AI가 찾은 일정 검토하기</h2><p>AI 분석 결과는 바로 저장되지 않으며 사용자가 마지막으로 확인합니다.</p></div></div><div className="help-steps"><article><span>1</span><div><h3>제목 확인</h3><p>수업명이나 행사명이 원문 의도와 맞는지 확인하세요. 동일한 이름의 중복 결과는 자동으로 숨겨집니다.</p></div></article><article><span>2</span><div><h3>날짜·시간 확인</h3><p>사진이 기울거나 연도가 생략된 문서는 날짜가 부정확할 수 있습니다. 특히 오전·오후와 마감 시간을 확인하세요.</p></div></article><article><span>3</span><div><h3>필요한 항목 선택</h3><p>체크된 일정만 저장됩니다. 필요하지 않은 일정은 체크를 해제하세요.</p></div></article><article><span>4</span><div><h3>캘린더에 추가</h3><p>버튼에 표시된 일정 개수를 확인하고 추가합니다. 기존 캘린더와 겹치는 일정은 다시 저장되지 않습니다.</p></div></article></div><div className="help-warning"><strong>인식 정확도를 높이는 촬영 방법</strong><ul><li>문서 전체가 잘리지 않게 정면에서 촬영하세요.</li><li>빛 반사와 그림자를 피하고 글자가 선명한 사진을 사용하세요.</li><li>시간표는 날짜 머리글과 교시 시간이 한 화면에 보이게 촬영하세요.</li><li>이어지는 문서는 순서대로 여러 장을 선택하세요.</li></ul></div></section>
     <section className="help-page-section" id="help-calendar"><div className="help-section-heading"><b>04</b><div><h2>등록한 일정 관리하기</h2><p>일정을 누르면 상세 정보와 관리 기능이 표시됩니다.</p></div></div><div className="help-feature-list"><article><strong>상세 보기</strong><p>날짜, 시간, 장소, 메모와 분류를 한 번에 확인합니다.</p></article><article><strong>완료 처리</strong><p>마감이나 할 일을 끝냈다면 ‘완료로 표시’를 누릅니다. 완료 항목은 마감 일정의 완료 목록으로 이동합니다.</p></article><article><strong>수정</strong><p>잘못 인식된 제목·날짜·시간·분류를 고쳐 저장합니다.</p></article><article><strong>복사하여 추가</strong><p>비슷한 일정을 새 날짜에 만들 때 기존 정보를 복사합니다.</p></article><article><strong>삭제</strong><p>하나의 일정만 삭제합니다. 주간 보기의 ‘전체 삭제’는 모든 일정을 지우므로 주의하세요.</p></article><article><strong>분류 필터</strong><p>캘린더의 필터 또는 분류 관리에서 보고 싶은 분류만 선택합니다.</p></article></div><div className="help-inline-actions"><button onClick={onOpenCalendar}><CalendarDays />캘린더 보기</button><button onClick={onOpenToday}><CalendarDays />오늘 일정 보기</button></div></section>
@@ -851,7 +873,6 @@ function HelpPage({ onOpenCalendar, onOpenToday, onOpenSettings, onOpenCategorie
 function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
   const cells = useMemo(() => { const from = startOfWeek(startOfMonth(month)); const to = endOfWeek(endOfMonth(month)); const result: Date[] = []; for (let day = from; day <= to; day = addDays(day, 1)) result.push(day); return result; }, [month]);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
-  useEffect(() => setExpandedDate(null), [month]);
   return <div className="month-calendar"><div className="weekday-row">{["일", "월", "화", "수", "목", "금", "토"].map((day, index) => <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((day) => {
     const dateKey = format(day, "yyyy-MM-dd");
     const dayEvents = events.filter((event) => event.date === dateKey);

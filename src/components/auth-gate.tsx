@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   getRedirectResult,
@@ -8,7 +9,7 @@ import {
   signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
+  setPersistence,
   updateProfile,
   type User,
 } from "firebase/auth";
@@ -37,15 +38,9 @@ function friendlyAuthError(error: unknown) {
   return authMessages[code] || "로그인 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
-function shouldUseRedirect() {
-  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  const standalone = window.matchMedia("(display-mode: standalone)").matches;
-  return mobileUserAgent || standalone;
-}
-
 export default function AuthGate() {
   const [user, setUser] = useState<User | null>(null);
-  const [checking, setChecking] = useState(true);
+  const [checking, setChecking] = useState(isFirebaseConfigured);
   const [mode, setMode] = useState<AuthMode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,14 +51,15 @@ export default function AuthGate() {
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
-      setChecking(false);
       return;
     }
     const { auth } = getFirebaseServices();
-    void getRedirectResult(auth).catch((authError) => {
-      setError(friendlyAuthError(authError));
-      setLoading(null);
-    });
+    void setPersistence(auth, browserLocalPersistence)
+      .then(() => getRedirectResult(auth))
+      .catch((authError) => {
+        setError(friendlyAuthError(authError));
+        setLoading(null);
+      });
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setChecking(false);
@@ -97,22 +93,9 @@ export default function AuthGate() {
       const { auth } = getFirebaseServices();
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
+      await setPersistence(auth, browserLocalPersistence);
 
-      if (shouldUseRedirect()) {
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-
-      try {
-        await signInWithPopup(auth, provider);
-      } catch (authError) {
-        const code = typeof authError === "object" && authError && "code" in authError ? String(authError.code) : "";
-        if (code === "auth/popup-blocked") {
-          await signInWithRedirect(auth, provider);
-          return;
-        }
-        throw authError;
-      }
+      await signInWithPopup(auth, provider);
     } catch (authError) {
       setError(friendlyAuthError(authError));
     } finally {
