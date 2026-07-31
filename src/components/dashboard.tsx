@@ -6,7 +6,7 @@ import { Bell, CalendarDays, Camera, ChevronDown, ChevronLeft, ChevronRight, Cir
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import NextImage from "next/image";
 import { deleteUser, GoogleAuthProvider, linkWithPopup, reauthenticateWithPopup, signInWithPopup, signOut } from "firebase/auth";
-import { createEvent, removeAllEvents, removeEvent, subscribeToEvents, updateEvent } from "@/lib/events";
+import { createEvent, removeAllEvents, removeEvent, removeEvents, subscribeToEvents, updateEvent } from "@/lib/events";
 import { getFirebaseServices, isFirebaseConfigured } from "@/lib/firebase";
 import type { CalendarEvent, EventCategory, EventDraft } from "@/types/calendar";
 import { Logo } from "./logo";
@@ -17,6 +17,7 @@ const categoryPalette = ["#27a7df", "#7161d9", "#ef8f43", "#35a776", "#e55555", 
 type CategorySetting = { name: string; color: string };
 type AppNotification = { id: string; title: string; body: string; createdAt: string; read: boolean };
 type ToastState = { type: "success" | "info" | "warning" | "error"; title: string; message: string };
+type BulkDeleteRequest = { title: string; description: string; buttonLabel: string; ids: string[] };
 const today = new Date();
 const todayKey = format(today, "yyyy-MM-dd");
 const sample = (id: string, offset: number, title: string, time: string, category: EventCategory, location = ""): CalendarEvent => ({ id, title, date: format(addDays(today, offset), "yyyy-MM-dd"), startTime: time, endTime: "", location, category, memo: "" });
@@ -81,7 +82,7 @@ export default function Dashboard() {
   const [calendarView, setCalendarView] = useState<"month" | "week">("month");
   const [activeSection, setActiveSection] = useState<"calendar" | "today" | "upcoming" | "deadline" | "help">("calendar");
   const [sidebar, setSidebar] = useState(false);
-  const [modal, setModal] = useState<"message" | "photo" | "manual" | "review" | "categories" | "settings" | "notifications" | "help" | "deleteAll" | null>(null);
+  const [modal, setModal] = useState<"message" | "photo" | "manual" | "review" | "categories" | "settings" | "notifications" | "help" | null>(null);
   const [message, setMessage] = useState("");
   const [draft, setDraft] = useState<EventDraft>(emptyDraft);
   const [candidates, setCandidates] = useState<EventDraft[]>([]);
@@ -91,6 +92,9 @@ export default function Dashboard() {
   const [analyzing, setAnalyzing] = useState(false);
   const [notice, setNotice] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<CalendarEvent | null>(null);
+  const [bulkDeleteRequest, setBulkDeleteRequest] = useState<BulkDeleteRequest | null>(null);
+  const [monthSelectionMode, setMonthSelectionMode] = useState(false);
+  const [selectedMonthEventIds, setSelectedMonthEventIds] = useState<string[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [editTarget, setEditTarget] = useState<CalendarEvent | null>(null);
   const [copyTarget, setCopyTarget] = useState<CalendarEvent | null>(null);
@@ -479,6 +483,8 @@ export default function Dashboard() {
   function openHelp() { setActiveSection("help"); setSidebar(false); }
   function changeCalendarView(nextView: "month" | "week") {
     if (nextView === calendarView) return;
+    setMonthSelectionMode(false);
+    setSelectedMonthEventIds([]);
     setMobileWeekStartsToday(false);
     setMonth((current) => nextView === "week"
       ? startOfWeek(current)
@@ -486,6 +492,8 @@ export default function Dashboard() {
     setCalendarView(nextView);
   }
   function goToToday() {
+    setMonthSelectionMode(false);
+    setSelectedMonthEventIds([]);
     if (calendarView === "week" && isMobileViewport) {
       setMonth(today);
       setMobileWeekStartsToday(true);
@@ -608,15 +616,28 @@ export default function Dashboard() {
     setCategorySettings(next);
     localStorage.setItem("t-calendar-categories", JSON.stringify(next));
   }
-  async function deleteAll() {
+  function requestBulkDelete(title: string, description: string, buttonLabel: string, ids: string[]) {
     if (!isFirebaseConfigured) return setNotice("체험 일정은 삭제할 수 없습니다.");
+    setBulkDeleteRequest({ title, description, buttonLabel, ids: [...new Set(ids)] });
+  }
+  async function deleteRequestedEvents() {
+    if (!bulkDeleteRequest) return;
+    const ids = bulkDeleteRequest.ids.filter((id) => events.some((event) => event.id === id));
+    if (!ids.length) {
+      setBulkDeleteRequest(null);
+      return setNotice("삭제할 일정이 없습니다.");
+    }
     setLoading(true);
     try {
-      const count = await removeAllEvents();
-      setModal(null);
-      setNotice(`${count}개의 일정을 모두 삭제했습니다.`);
+      const count = await removeEvents(ids);
+      const deletedIds = new Set(ids);
+      setEvents((current) => current.filter((event) => !deletedIds.has(event.id)));
+      setSelectedMonthEventIds((current) => current.filter((id) => !deletedIds.has(id)));
+      setMonthSelectionMode(false);
+      setBulkDeleteRequest(null);
+      setNotice(`${count}개의 일정을 삭제했습니다.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "전체 일정을 삭제하지 못했습니다.");
+      setNotice(error instanceof Error ? error.message : "일정을 삭제하지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -832,6 +853,16 @@ export default function Dashboard() {
   categories.splice(0, categories.length, ...categorySettings.map((category) => category.name));
   const visibleWeekStart = calendarView === "week" && isMobileViewport && mobileWeekStartsToday ? month : startOfWeek(month);
   const visibleWeekEnd = addDays(visibleWeekStart, 6);
+  const monthStartKey = format(startOfMonth(month), "yyyy-MM-dd");
+  const monthEndKey = format(endOfMonth(month), "yyyy-MM-dd");
+  const weekStartKey = format(visibleWeekStart, "yyyy-MM-dd");
+  const weekEndKey = format(visibleWeekEnd, "yyyy-MM-dd");
+  const eventIdsInRange = (start: string, end: string) => events
+    .filter((event) => event.date <= end && eventEndDate(event) >= start)
+    .map((event) => event.id);
+  const monthlyEventIds = eventIdsInRange(monthStartKey, monthEndKey);
+  const weeklyEventIds = eventIdsInRange(weekStartKey, weekEndKey);
+  const deletableEventIds = new Set(events.map((event) => event.id));
   return <div className="app-shell">
     <style>{categorySettings.map((category, index) => `.c-${index}{color:${category.color}!important;background:color-mix(in srgb,${category.color} 11%,white)!important}`).join("")}</style>
     <aside className={`sidebar ${sidebar ? "open" : ""}`}>
@@ -855,10 +886,18 @@ export default function Dashboard() {
         {activeSection === "calendar" ? <div className="workspace">
           <div className="calendar-column">
             <section className="calendar-card">
-            <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(visibleWeekStart, "M월 d일")} – ${format(visibleWeekEnd, "M월 d일")}`}</h1><button onClick={() => setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1))}><ChevronLeft /></button><button onClick={() => setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1))}><ChevronRight /></button><button onClick={goToToday}>오늘</button></div>
-              <div className="view-tools"><div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => changeCalendarView("month")}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => changeCalendarView("week")}>주간</button></div><button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button><button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>{calendarView === "week" && <button className="delete-all-button" onClick={() => setModal("deleteAll")}><Trash2 />전체 삭제</button>}</div></div>
+            <div className="calendar-toolbar"><div className="month-nav"><h1>{calendarView === "month" ? format(month, "yyyy년 M월") : `${format(visibleWeekStart, "M월 d일")} – ${format(visibleWeekEnd, "M월 d일")}`}</h1><button onClick={() => { setMonthSelectionMode(false); setSelectedMonthEventIds([]); setMonth((date) => calendarView === "month" ? subMonths(date, 1) : subWeeks(date, 1)); }}><ChevronLeft /></button><button onClick={() => { setMonthSelectionMode(false); setSelectedMonthEventIds([]); setMonth((date) => calendarView === "month" ? addMonths(date, 1) : addWeeks(date, 1)); }}><ChevronRight /></button><button onClick={goToToday}>오늘</button></div>
+              <div className="view-tools">
+                <div className="view-switch"><button className={calendarView === "month" ? "active" : ""} onClick={() => changeCalendarView("month")}>월간</button><button className={calendarView === "week" ? "active" : ""} onClick={() => changeCalendarView("week")}>주간</button></div>
+                <button className="filter-button" onClick={() => setModal("categories")}><SlidersHorizontal />필터</button>
+                <button className="export-button" onClick={shareToKakaoTalk} title="기본 공유창에서 카카오톡을 선택하세요"><Share2 />카카오톡으로 내보내기</button>
+                {calendarView === "month" && <button className={`calendar-select-button ${monthSelectionMode ? "active" : ""}`} onClick={() => { setMonthSelectionMode((current) => !current); setSelectedMonthEventIds([]); }}>{monthSelectionMode ? "선택 취소" : "일정 선택"}</button>}
+                {calendarView === "month" && monthSelectionMode && <button className="delete-all-button" disabled={!selectedMonthEventIds.length} onClick={() => requestBulkDelete("선택한 일정을 삭제할까요?", `선택한 일정 ${selectedMonthEventIds.length}개가 삭제됩니다.`, "선택 일정 삭제", selectedMonthEventIds)}><Trash2 />선택 삭제 ({selectedMonthEventIds.length})</button>}
+                {calendarView === "month" && <button className="delete-all-button" disabled={!monthlyEventIds.length} onClick={() => requestBulkDelete("이번 달 일정을 모두 삭제할까요?", `${format(month, "yyyy년 M월")}의 일정 ${monthlyEventIds.length}개가 삭제됩니다.`, "월간 일정 전체 삭제", monthlyEventIds)}><Trash2 />월간 전체 일정 삭제</button>}
+                {calendarView === "week" && <button className="delete-all-button" disabled={!weeklyEventIds.length} onClick={() => requestBulkDelete("이번 주 일정을 모두 삭제할까요?", `${format(visibleWeekStart, "M월 d일")}부터 ${format(visibleWeekEnd, "M월 d일")}까지 일정 ${weeklyEventIds.length}개가 삭제됩니다.`, "주간 일정 삭제", weeklyEventIds)}><Trash2 />주간 일정 삭제</button>}
+              </div></div>
             {calendarView === "month"
-              ? <MonthCalendar key={month.toISOString()} month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />
+              ? <MonthCalendar key={month.toISOString()} month={month} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} selectionMode={monthSelectionMode} selectedIds={selectedMonthEventIds} deletableIds={deletableEventIds} onToggleSelect={(event) => setSelectedMonthEventIds((current) => current.includes(event.id) ? current.filter((id) => id !== event.id) : [...current, event.id])} />
               : <WeekCalendar week={visibleWeekStart} events={calendarEvents} onAdd={(date) => { setDraft({ ...emptyDraft, date }); setModal("manual"); }} onSelect={setSelectedEvent} />}
             </section>
             <section className="rail-card today-card"><div className="today-heading"><div><h2>오늘의 일정</h2><p className="rail-date">{format(today, "M월 d일 (EEE)", { locale: ko })}</p></div><button className="rail-more" onClick={openToday}><span>전체 일정 보기</span><ChevronRight /></button></div><div className="today-list">{todayEvents.length ? todayEvents.map((event) => <TodayItem key={event.id} event={event} onOpen={() => setSelectedEvent(event)} />) : <div className="home-empty-message"><CalendarDays /><span><strong>오늘 등록된 일정이 없습니다.</strong><small>새 일정을 추가하면 이곳에서 바로 확인할 수 있어요.</small></span></div>}</div></section>
@@ -918,7 +957,7 @@ export default function Dashboard() {
       <section><h3>로그인 및 데이터 관리</h3><div className="account-card"><div><strong>{userName}</strong><small>{currentUser?.isAnonymous ? "체험 계정" : currentUser?.email || "로그인됨"}</small>{googleCalendarAccount && <small>Google Calendar 연결됨 · {googleCalendarAccount}</small>}</div><div className="account-actions"><button className="secondary-button" onClick={connectGoogleCalendar} disabled={Boolean(googleCalendarLoading)}><CalendarDays />{googleCalendarLoading === "connect" ? "Google 연결 중..." : googleCalendarToken ? "Google 계정 다시 연결" : "Google 계정과 연결하기"}</button><button className="secondary-button" onClick={exportToGoogleCalendar} disabled={!googleCalendarToken || Boolean(googleCalendarLoading)}><CalendarDays />{googleCalendarLoading === "export" ? "내보내는 중..." : "Google 캘린더로 내보내기"}</button><button className="secondary-button" onClick={shareToKakaoTalk}><Share2 />카카오톡으로 내보내기</button><button className="secondary-button" onClick={exportCalendar}><Download />ICS 내보내기</button><button className="secondary-button" disabled={!currentUser} onClick={() => currentUser && signOut(getFirebaseServices().auth)}>로그아웃</button><button className="danger-button" disabled={!currentUser || loading} onClick={deleteAccountAndData}>계정·데이터 삭제</button></div></div></section>
       <div className="modal-actions"><button className="primary-button" onClick={() => setModal(null)}>완료</button></div>
     </div></Modal>
-    <Modal title="전체 일정을 삭제할까요?" open={modal === "deleteAll"} onClose={() => setModal(null)}><div className="modal-body"><div className="delete-all-warning"><Trash2 /><div><strong>등록된 일정 {events.length}개가 모두 삭제됩니다.</strong><p>삭제한 일정은 복구할 수 없습니다.</p></div></div><div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>취소</button><button className="danger-button" disabled={loading || !events.length || !isFirebaseConfigured} onClick={deleteAll}>{loading ? "삭제 중..." : "전체 삭제"}</button></div></div></Modal>
+    <Modal title={bulkDeleteRequest?.title || "일정을 삭제할까요?"} open={Boolean(bulkDeleteRequest)} onClose={() => !loading && setBulkDeleteRequest(null)}><div className="modal-body"><div className="delete-all-warning"><Trash2 /><div><strong>{bulkDeleteRequest?.description}</strong><p>삭제한 일정은 복구할 수 없습니다.</p></div></div><div className="modal-actions"><button className="secondary-button" disabled={loading} onClick={() => setBulkDeleteRequest(null)}>취소</button><button className="danger-button" disabled={loading || !bulkDeleteRequest?.ids.length || !isFirebaseConfigured} onClick={deleteRequestedEvents}>{loading ? "삭제 중..." : bulkDeleteRequest?.buttonLabel || "삭제"}</button></div></div></Modal>
     <Modal title="일정 상세" open={Boolean(selectedEvent)} onClose={() => setSelectedEvent(null)}><div className="modal-body event-detail">{selectedEvent && <><div className="detail-badges"><div className={`detail-category c-${categories.indexOf(selectedEvent.category)}`}>{selectedEvent.category}</div>{selectedEvent.completed && <span className="detail-completed">완료됨</span>}</div><h3 className={selectedEvent.completed ? "completed-title" : ""}>{selectedEvent.title}</h3><dl><div><dt>날짜</dt><dd>{format(parseISO(selectedEvent.date), "yyyy년 M월 d일 (EEE)", { locale: ko })}</dd></div><div><dt>시간</dt><dd>{selectedEvent.allDay ? "종일" : `${selectedEvent.startTime || "시간 미정"}${selectedEvent.endTime ? ` – ${selectedEvent.endTime}` : ""}`}</dd></div><div><dt>장소</dt><dd>{selectedEvent.location || "장소 미정"}</dd></div><div><dt>메모</dt><dd>{selectedEvent.memo || "메모 없음"}</dd></div></dl><button className={`completion-button ${selectedEvent.completed ? "is-completed" : ""}`} disabled={loading} onClick={() => toggleCompleted(selectedEvent)}>{selectedEvent.completed ? "미완료로 되돌리기" : "일정 완료"}</button><div className="detail-actions"><button className="detail-copy" onClick={() => { setCopyTarget(selectedEvent); setCopyDate(format(addDays(parseISO(selectedEvent.date), 1), "yyyy-MM-dd")); setCopyTitle(selectedEvent.title); setCopyStartTime(selectedEvent.startTime); setCopyEndTime(selectedEvent.endTime); setSelectedEvent(null); }}><Plus /><span>복사하여 추가</span></button><button className="detail-edit" onClick={() => { setDraft(toDraft(selectedEvent)); setEditTarget(selectedEvent); setSelectedEvent(null); }}>수정</button><button className="detail-delete" onClick={() => { setDeleteTarget(selectedEvent); setSelectedEvent(null); }}>삭제</button></div></>}</div></Modal>
     <Modal title="일정 복사하기" open={Boolean(copyTarget)} onClose={() => setCopyTarget(null)}><form className="modal-body copy-event-form" onSubmit={saveCopy}>{copyTarget && <><span className={`detail-category c-${categories.indexOf(copyTarget.category)}`}>{copyTarget.category}</span><label className="copy-edit-field">일정 이름<input required value={copyTitle} onChange={(event) => setCopyTitle(event.target.value)} /></label><div className="copy-time-fields"><label>시작 시간<input type="time" value={copyStartTime} onChange={(event) => setCopyStartTime(event.target.value)} /></label><label>종료 시간<input type="time" value={copyEndTime} onChange={(event) => setCopyEndTime(event.target.value)} /></label></div><label className="copy-date-field">새 일정 날짜<input required type="date" value={copyDate} onChange={(event) => setCopyDate(event.target.value)} /></label><p className="copy-helper">기존 일정의 이름과 시간을 불러왔습니다. 필요한 내용을 변경한 뒤 새 날짜에 복사하세요.</p><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setCopyTarget(null)}>취소</button><button type="submit" className="primary-button" disabled={loading || !copyTitle.trim()}>{loading ? "복사 중..." : "일정 복사"}</button></div></>}</form></Modal>
     <Modal title="일정 수정" open={Boolean(editTarget)} onClose={() => setEditTarget(null)}><EventForm draft={draft} setDraft={setDraft} onSubmit={saveEdit} loading={loading} submitLabel="수정 완료" categoryOptions={categorySettings.map((category) => category.name)} /></Modal>
@@ -945,7 +984,7 @@ function HelpPage({ onOpenCalendar, onOpenToday, onOpenSettings, onOpenCategorie
   </section>;
 }
 
-function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void }) {
+function MonthCalendar({ month, events, onAdd, onSelect, selectionMode, selectedIds, deletableIds, onToggleSelect }: { month: Date; events: CalendarEvent[]; onAdd: (date: string) => void; onSelect: (event: CalendarEvent) => void; selectionMode: boolean; selectedIds: string[]; deletableIds: Set<string>; onToggleSelect: (event: CalendarEvent) => void }) {
   const cells = useMemo(() => { const from = startOfWeek(startOfMonth(month)); const to = endOfWeek(endOfMonth(month)); const result: Date[] = []; for (let day = from; day <= to; day = addDays(day, 1)) result.push(day); return result; }, [month]);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   return <div className="month-calendar"><div className="weekday-row">{["일", "월", "화", "수", "목", "금", "토"].map((day, index) => <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((day) => {
@@ -956,7 +995,11 @@ function MonthCalendar({ month, events, onAdd, onSelect }: { month: Date; events
     return <div key={day.toISOString()} className={`day-cell ${dayEvents.length > 1 ? "has-multiple" : ""} ${expanded ? "is-expanded" : ""} ${!isSameMonth(day, month) ? "outside" : ""} ${isSameDay(day, today) ? "selected" : ""}`} onDoubleClick={() => onAdd(dateKey)}>
       <span className="day-number">{format(day, "d")}</span>
       <div className="cell-events">
-        {displayedEvents.map((event) => <button className={`cell-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""}`} key={event.id} onDoubleClick={(click) => click.stopPropagation()} onClick={() => onSelect(event)}><b>{shortCategory(event.category)}</b><small>{event.startTime}</small><em className={event.completed ? "completed-title" : ""}>{event.title}</em></button>)}
+        {displayedEvents.map((event) => {
+          const deletable = deletableIds.has(event.id);
+          const selectedForDelete = selectedIds.includes(event.id);
+          return <button className={`cell-event c-${categories.indexOf(event.category)} ${event.completed ? "is-completed" : ""} ${selectedForDelete ? "is-selected-for-delete" : ""} ${selectionMode && !deletable ? "is-not-deletable" : ""}`} key={event.id} aria-pressed={selectionMode && deletable ? selectedForDelete : undefined} title={selectionMode && !deletable ? "기본 공휴일은 삭제할 수 없습니다." : event.title} onDoubleClick={(click) => click.stopPropagation()} onClick={(click) => { click.stopPropagation(); if (selectionMode) { if (deletable) onToggleSelect(event); } else onSelect(event); }}>{selectionMode && deletable && <span className="delete-selection-check" aria-hidden="true">{selectedForDelete ? "✓" : ""}</span>}<b>{shortCategory(event.category)}</b><small>{event.startTime}</small><em className={event.completed ? "completed-title" : ""}>{event.title}</em></button>;
+        })}
         {dayEvents.length > 2 && <button className="more-events" type="button" aria-expanded={expanded} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setExpandedDate(expanded ? null : dateKey); }}><ChevronDown /><span>{expanded ? "접기" : `+${dayEvents.length - 2}개`}</span><span className="more-events-desktop">{expanded ? "" : " 더보기"}</span></button>}
       </div>
     </div>;

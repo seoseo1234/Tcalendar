@@ -36,13 +36,14 @@ export async function subscribeToEvents(onChange: (events: CalendarEvent[]) => v
 }
 
 function withWriteTimeout<T>(operation: Promise<T>) {
-  return Promise.race([
-    operation,
-    new Promise<never>((_, reject) => window.setTimeout(
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
       () => reject(new Error("서버 연결이 지연되고 있습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.")),
       15_000,
-    )),
-  ]);
+    );
+  });
+  return Promise.race([operation, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 export async function createEvent(event: EventDraft) {
@@ -59,13 +60,22 @@ export async function removeEvent(id: string) {
   return withWriteTimeout(deleteDoc(doc(db, "users", await getUserId(), "events", id)));
 }
 
-export async function removeAllEvents() {
+export async function removeEvents(ids: string[]) {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (!uniqueIds.length) return 0;
   const { db } = getFirebaseServices();
-  const snapshot = await getDocs(await getEventsRef());
-  for (let start = 0; start < snapshot.docs.length; start += 500) {
+  const userId = await getUserId();
+  for (let start = 0; start < uniqueIds.length; start += 500) {
     const batch = writeBatch(db);
-    snapshot.docs.slice(start, start + 500).forEach((event) => batch.delete(event.ref));
-    await batch.commit();
+    uniqueIds.slice(start, start + 500).forEach((id) => {
+      batch.delete(doc(db, "users", userId, "events", id));
+    });
+    await withWriteTimeout(batch.commit());
   }
-  return snapshot.size;
+  return uniqueIds.length;
+}
+
+export async function removeAllEvents() {
+  const snapshot = await withWriteTimeout(getDocs(await getEventsRef()));
+  return removeEvents(snapshot.docs.map((event) => event.id));
 }

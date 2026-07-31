@@ -377,3 +377,22 @@ html[data-theme=dark] .cell-event em{color:#34424b}
   .quick-message-actions{grid-template-columns:1fr}
   .quick-message-actions button{width:100%}
 }
+
+/* Scoped calendar deletion controls */
+.calendar-toolbar{height:auto;min-height:58px;gap:10px}
+.view-tools{justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.calendar-select-button{height:39px;border:1px solid #b9dceb;border-radius:9px;background:#f2fbff;color:#1479a8;padding:0 12px;cursor:pointer}
+.calendar-select-button.active{background:#dff5ff;border-color:#55bce9;color:#086994;font-weight:700}
+.delete-all-button:disabled{cursor:not-allowed;opacity:.45}
+.cell-event{position:relative}
+.cell-event.is-selected-for-delete{outline:2px solid #e4485d;outline-offset:1px;box-shadow:0 0 0 3px #e4485d24}
+.cell-event.is-not-deletable{opacity:.55}
+.delete-selection-check{position:absolute;right:3px;top:3px;width:15px;height:15px;border:1px solid #d34a5d;border-radius:4px;background:#fff;color:#c52f45;display:grid;place-items:center;font-size:10px;font-weight:800;line-height:1}
+html[data-theme=dark] .calendar-select-button{background:#405563;color:#d8f3ff;border-color:#6d8794}
+html[data-theme=dark] .calendar-select-button.active{background:#32677c;border-color:#79cce9;color:#fff}
+html[data-theme=dark] .delete-selection-check{background:#fff;color:#b52239}
+
+@media(max-width:780px){
+  .view-tools{display:grid;grid-template-columns:minmax(0,1fr) 40px 40px}
+  .view-tools>.calendar-select-button,.view-tools>.delete-all-button{grid-column:1/-1;width:100%;height:36px;justify-content:center}
+}
