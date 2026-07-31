@@ -96,7 +96,27 @@ export default function Dashboard() {
     });
   }
 
-  useEffect(() => { let stop: () => void = () => undefined; subscribeToEvents(setEvents).then((unsubscribe) => { stop = unsubscribe; }).catch(() => undefined); return () => stop(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    let stop: () => void = () => undefined;
+    subscribeToEvents(
+      (nextEvents) => {
+        if (!cancelled) setEvents(nextEvents);
+      },
+      () => {
+        if (!cancelled) setNotice("일정 동기화 연결이 끊겼습니다. 네트워크를 확인하거나 화면을 새로고침해 주세요.");
+      },
+    ).then((unsubscribe) => {
+      if (cancelled) unsubscribe();
+      else stop = unsubscribe;
+    }).catch((error) => {
+      if (!cancelled) setNotice(error instanceof Error ? error.message : "일정을 불러오지 못했습니다.");
+    });
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 780px)");
     const updateViewport = () => {

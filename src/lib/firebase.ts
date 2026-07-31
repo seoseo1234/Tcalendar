@@ -1,5 +1,5 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, type Firestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
@@ -12,9 +12,13 @@ const firebaseConfig = {
 };
 
 export const isFirebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+let firestore: Firestore | undefined;
 
 export function getFirebaseServices() {
   if (!isFirebaseConfigured) throw new Error("Firebase 환경변수를 먼저 설정해 주세요.");
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
-  return { db: getFirestore(app), auth: getAuth(app) };
+  firestore ||= initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+  });
+  return { db: firestore, auth: getAuth(app) };
 }
