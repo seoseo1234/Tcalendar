@@ -3,10 +3,12 @@
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
+  getRedirectResult,
   onAuthStateChanged,
   signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   updateProfile,
   type User,
 } from "firebase/auth";
@@ -23,6 +25,8 @@ const authMessages: Record<string, string> = {
   "auth/invalid-credential": "아이디 또는 비밀번호가 올바르지 않습니다.",
   "auth/invalid-email": "올바른 이메일 주소를 입력해 주세요.",
   "auth/popup-closed-by-user": "Google 로그인 창이 닫혔습니다.",
+  "auth/popup-blocked": "브라우저가 Google 로그인 창을 차단했습니다.",
+  "auth/unauthorized-domain": "현재 주소가 Firebase의 승인된 도메인에 등록되지 않았습니다.",
   "auth/too-many-requests": "로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요.",
   "auth/weak-password": "비밀번호는 6자 이상으로 입력해 주세요.",
   "auth/operation-not-allowed": "Firebase 콘솔에서 해당 로그인 방식을 활성화해 주세요.",
@@ -31,6 +35,12 @@ const authMessages: Record<string, string> = {
 function friendlyAuthError(error: unknown) {
   const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
   return authMessages[code] || "로그인 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+function shouldUseRedirect() {
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const standalone = window.matchMedia("(display-mode: standalone)").matches;
+  return mobileUserAgent || standalone;
 }
 
 export default function AuthGate() {
@@ -50,9 +60,14 @@ export default function AuthGate() {
       return;
     }
     const { auth } = getFirebaseServices();
+    void getRedirectResult(auth).catch((authError) => {
+      setError(friendlyAuthError(authError));
+      setLoading(null);
+    });
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setChecking(false);
+      if (nextUser) setLoading(null);
     });
   }, []);
 
@@ -80,7 +95,24 @@ export default function AuthGate() {
     setError("");
     try {
       const { auth } = getFirebaseServices();
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+
+      if (shouldUseRedirect()) {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (authError) {
+        const code = typeof authError === "object" && authError && "code" in authError ? String(authError.code) : "";
+        if (code === "auth/popup-blocked") {
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        throw authError;
+      }
     } catch (authError) {
       setError(friendlyAuthError(authError));
     } finally {
