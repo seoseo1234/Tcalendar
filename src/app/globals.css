@@ -293,6 +293,13 @@ html[data-theme=dark] .photo-source{background:#3b515e;color:#f4f8fa;border-colo
 html[data-theme=dark] .photo-source:hover{background:#48616f;border-color:#8fc9df}
 html[data-theme=dark] .camera-source{background:#5a5238;border-color:#9e8847}
 html[data-theme=dark] .camera-source:hover{background:#685f40;border-color:#cfb34f}
+@media(max-width:780px){
+  .cell-event,.day-cell.has-multiple .cell-event{display:block!important;min-height:25px!important;padding:3px 3px!important;overflow:hidden}
+  .cell-event b{display:block;font-size:7px!important;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cell-event em,.day-cell.has-multiple .cell-event em{display:block!important;margin-top:2px;font-size:7px!important;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#34424b}
+  .cell-event small,.day-cell.has-multiple .cell-event small{display:none!important}
+}
+html[data-theme=dark] .cell-event em{color:#34424b}
 
 /* 2026 T-Calendar blue & gold brand */
 .logo{position:relative;display:block;width:214px;height:54px;overflow:hidden;flex:none}.logo img{position:absolute;width:315px;max-width:none;height:auto;left:-46px;top:-20px;filter:none!important}.logo.logo-compact{width:48px;height:48px}.logo.logo-compact img{left:-44px;top:-18px;width:300px}.sidebar-top>span{margin:3px 0 0 7px;color:#667f8d}.auth-brand>span{margin:5px 0 0 7px}.mobile-logo{border:0;background:transparent;padding:0;overflow:hidden}.nav-item.active{background:linear-gradient(135deg,#2bb3f4,#129fe8);box-shadow:0 7px 18px #129fe83d}.auth-submit{background:linear-gradient(135deg,#2db5f5,#129fe8);box-shadow:0 7px 18px #129fe82e}.quick-message-actions button[type="submit"],.legal-modal-actions button{background:linear-gradient(135deg,#2db5f5,#129fe8)}.logo-mark{display:none}.auth-copy h1 em{color:#129fe8}.auth-copy h1 em:after{background:#ffca4fa6}.auth-kicker{border-color:#a9e1fb;color:#129fe8}.selected .day-number,.nav-count,.today-add-button,.today-empty button{background:#ffca4f}.tip-card{border-color:#b8e7fb;background:linear-gradient(150deg,#fff,#fff8dc)}main{background:radial-gradient(circle at 55% 0,#e9f8ff 0,transparent 34%),var(--bg)}

@@ -207,9 +207,9 @@ export default function Dashboard() {
     .filter((event) => !demoDeletedIds.includes(event.id))
     .map((event) => ({ ...event, ...demoOverrides[event.id], ...(demoCompletedIds.includes(event.id) ? { completed: true, completedAt: new Date().toISOString() } : {}) })), [demoCompletedIds, demoDeletedIds, demoOverrides]);
   const visibleEvents = useMemo(() => {
-    const userEvents = isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents;
-    const holidays = nationalHolidays.filter((holidayEvent) => !userEvents.some((event) => event.date === holidayEvent.date && event.title === holidayEvent.title));
-    return [...holidays, ...userEvents];
+    const rawUserEvents = isAnonymous ? [...demoEvents, ...events] : isFirebaseConfigured ? events : demoEvents;
+    const userEvents = rawUserEvents.filter((event) => !isKnownHolidayCandidate(event));
+    return [...nationalHolidays, ...userEvents];
   }, [demoEvents, events, isAnonymous]);
   const calendarEvents = visibleEvents.filter((event) => visibleCategories.includes(event.category));
   const todayEvents = calendarEvents.filter((event) => eventOccursOn(event, todayKey));
@@ -352,7 +352,7 @@ export default function Dashboard() {
       const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, schoolSettings }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error);
       const uniqueEvents = deduplicateExtractedEvents(data.events);
-      const newEvents = uniqueEvents.filter((event) => !visibleEvents.some((saved) => eventsOverlap(event, saved)));
+      const newEvents = uniqueEvents.filter((event) => !isKnownHolidayCandidate(event) && !visibleEvents.some((saved) => eventsOverlap(event, saved)));
       const replacements: Record<number, string> = {};
       newEvents.forEach((candidate, index) => {
         const similar = visibleEvents.find((event) => !event.id.startsWith("s") && normalizeEventText(event.title) === normalizeEventText(candidate.title) && event.date !== candidate.date);
@@ -422,7 +422,7 @@ export default function Dashboard() {
         const replacementId = candidateReplacementIds[index];
         if (replacementId && !replacementId.startsWith("s")) {
           await updateEvent(replacementId, event); savedCount += 1;
-        } else if (!visibleEvents.some((saved) => eventsOverlap(event, saved))) {
+        } else if (!isKnownHolidayCandidate(event) && !visibleEvents.some((saved) => eventsOverlap(event, saved))) {
           await createEvent(event); savedCount += 1;
         }
       }));
@@ -986,6 +986,16 @@ function formatEventDateRange(event: Pick<CalendarEvent, "date" | "endDate">) {
 }
 function normalizeEventText(value = "") {
   return value.toLowerCase().replace(/\s+/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+}
+function holidayTitleKey(value = "") {
+  return normalizeEventText(value).replace(/대체공휴일|공휴일|연휴/g, "");
+}
+function isKnownHolidayCandidate(event: Pick<CalendarEvent, "date" | "title" | "category">) {
+  const candidateKey = holidayTitleKey(event.title);
+  return nationalHolidays.some((holidayEvent) =>
+    holidayEvent.date === event.date
+    && (event.category === "공휴일" || candidateKey === holidayTitleKey(holidayEvent.title))
+  );
 }
 function canonicalEventTitle(value = "") {
   return normalizeEventText(value)

@@ -23,7 +23,10 @@ export function getFirebaseServices() {
   if (!isFirebaseConfigured) throw new Error("Firebase 환경변수를 먼저 설정해 주세요.");
   const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
   firestore ||= initializeFirestore(app, {
-    experimentalAutoDetectLongPolling: true,
+    experimentalForceLongPolling: true,
+    experimentalLongPollingOptions: {
+      timeoutSeconds: 30,
+    },
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager(),
     }),
